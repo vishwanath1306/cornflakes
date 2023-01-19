@@ -17,3 +17,6 @@
 [submodule "redis"]
 	path = redis
 	url = https://github.com/ygina/redis
+[submodule "0copycache"]
+	path = 0copycache
+	url = git@github.com:vishwanath1306/0copycache.git
