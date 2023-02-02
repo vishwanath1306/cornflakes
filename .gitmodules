@@ -14,6 +14,6 @@
 [submodule "dpdk-datapath/3rdparty/dpdk"]
 	path = dpdk-datapath/3rdparty/dpdk
 	url = https://github.com/DPDK/dpdk.git
-[submodule "modified-redis"]
-	path = modified-redis
-	url = https://github.com/vishwanath1306/modified-redis.git
+[submodule "redis"]
+	path = redis
+	url = https://github.com/vishwanath1306/redis.git
