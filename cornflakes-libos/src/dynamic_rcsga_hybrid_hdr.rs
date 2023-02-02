@@ -367,7 +367,7 @@ where
                 let zcc = datapath.get_mut_zcc();
                 zcc.update_stats(&y);
                 let segment_id = y.get_segment_id();
-                println!("Stats for pinned segment {} is: {}", segment_id, zcc.get_segment_access_count(y));
+                // println!("Stats for pinned segment {} is: {}", segment_id, zcc.get_segment_access_count(y));
                 Ok(CFBytes::RefCounted(x))
             },
             MetadataStatus::UnPinned((x,y)) => {
