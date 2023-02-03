@@ -366,7 +366,9 @@ where
             MetadataStatus::Pinned((x,y)) => {
                 let zcc = datapath.get_mut_zcc();
                 zcc.update_stats(&y);
-                let segment_id = y.get_segment_id();
+                // let segment_id = y.get_segment_id();
+                // zcc.calculate_hotset();
+                // println!("The current hotset is: {:?}", zcc.current_pinned_list);
                 // println!("Stats for pinned segment {} is: {}", segment_id, zcc.get_segment_access_count(y));
                 Ok(CFBytes::RefCounted(x))
             },
