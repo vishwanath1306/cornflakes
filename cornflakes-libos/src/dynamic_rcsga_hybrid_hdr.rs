@@ -363,10 +363,9 @@ where
         match datapath.recover_metadata_with_status(ptr)? {
             MetadataStatus::Pinned((x, y)) => {
                 let zcc = datapath.get_mut_zcc();
-                let segment_id = y.get_segment_id();
                 println!(
-                    "Stats for pinned segment {} is: {}",
-                    segment_id,
+                    "Stats for pinned segment {:?} is: {}",
+                    y.get_segment_id(),
                     zcc.get_segment_access_count(y)
                 );
                 Ok(CFBytes::RefCounted(x))

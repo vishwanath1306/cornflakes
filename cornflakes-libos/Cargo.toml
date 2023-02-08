@@ -30,7 +30,7 @@ itertools = "0.10.2"
 bitmaps = "3.2.0"
 bumpalo = { git = "https://github.com/deeptir18/bumpalo", features = ["collections"] }
 ahash = "0.7.6"
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "cbf407b288b804c6b920b2d2942f5d600f215d45" }
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "49ad8c24e7845860bf8aeef5ae2f8c2128ed43a6" }
 
 [dev-dependencies]
 libc = "0.2.81"

@@ -220,8 +220,9 @@ pub struct CornflakesSegment {
 }
 
 impl Segment for CornflakesSegment {
-    fn get_segment_id(&self) -> i64 {
-        self.mempool_id as _
+    type SegmentId = (MempoolID, usize);
+    fn get_segment_id(&self) -> Self::SegmentId {
+        (self.mempool_id, self.registration_unit)
     }
 
     fn get_page_size(&self) -> u64 {
