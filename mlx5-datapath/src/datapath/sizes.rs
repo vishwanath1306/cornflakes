@@ -1,31 +1,9 @@
-//! This modules contains sizes used to initialize mempools with different item sizes, and helper
-//! functions to determine optimal mempool pages, and page sizes.
-//! We assume metadata objects are all 64 bytes long, such that:
-//! 32768 (2^13) metadata objects fit in a single 2MB page.
-//! 64 (2^8) metadata objects fit in a single 4KB page.
-//! Since data and metadata are laid out separately:
-//! Each "mempool" consists of a data mempool and a metadata mempool
-//! with the SAME amount of items.
-//! We also want to not waste memory / ensure that metadatas
-//! use the entire page they are allocated on (either a 2MB page or 4K page).
-//! So for any given item size, there must be either:
-//! - multiples of 64 (for 4K metadata pages) items
-//! - multiples of 32768 (for 2MB metadata pages) items
-//! This means, the number of items must be aligned to either:
-//! - 64
-//! - 32768
-//! So, given the following:
-//! - Item size
-//! - Minimum number of items
-//! - Page size for metadata mbufs
-//! - Page size for data mbufs
-//! We can calculate the correct number of items.
-
 use color_eyre::eyre::{bail, Result};
 use cornflakes_libos::mem;
 
 pub const RX_MEMPOOL_DATA_PGSIZE: usize = mem::PGSIZE_2MB;
 pub const RX_MEMPOOL_DATA_LEN: usize = 16384;
+pub const RX_MEMPOOL_NUM_REGISTRATIONS: usize = 1;
 pub const RX_MEMPOOL_MIN_NUM_ITEMS: usize = 8192;
 
 pub fn align_up(x: usize, align_size: usize) -> usize {
@@ -45,11 +23,16 @@ pub struct MempoolAllocationParams {
     data_pgsize: usize,
     num_items: usize,
     num_data_pages: usize,
+    num_registrations: usize,
 }
 
 impl MempoolAllocationParams {
     pub fn get_item_len(&self) -> usize {
         self.item_len
+    }
+
+    pub fn get_registration_unit(&self) -> usize {
+        self.data_pgsize * self.num_registrations
     }
 
     pub fn get_num_items(&self) -> usize {
@@ -60,7 +43,12 @@ impl MempoolAllocationParams {
         self.data_pgsize
     }
 
-    pub fn new(min_items: usize, data_pgsize: usize, item_size: usize) -> Result<Self> {
+    pub fn new(
+        min_items: usize,
+        data_pgsize: usize,
+        item_size: usize,
+        num_registrations: usize,
+    ) -> Result<Self> {
         if data_pgsize != mem::PGSIZE_4KB
             && data_pgsize != mem::PGSIZE_2MB
             && data_pgsize != mem::PGSIZE_1GB
@@ -84,6 +72,11 @@ impl MempoolAllocationParams {
 
         // calculate the number of data pages and metadata pages accordingly
         let num_data_pages = num_items / data_items_per_page;
+
+        if num_data_pages % num_registrations != 0 || num_data_pages < num_registrations {
+            bail!("Mempool allocation params incorrect: cannot have {} registrations in mempool with {} pages", num_registrations, num_data_pages);
+        }
+
         tracing::info!(
             min_items,
             data_items_per_page,
@@ -91,14 +84,16 @@ impl MempoolAllocationParams {
             data_pgsize,
             item_size,
             num_items,
+            num_registrations,
             "Final allocation params"
         );
 
         Ok(MempoolAllocationParams {
             item_len: item_size,
-            data_pgsize: data_pgsize,
-            num_items: num_items,
-            num_data_pages: num_data_pages,
+            data_pgsize,
+            num_items,
+            num_data_pages,
+            num_registrations,
         })
     }
 }

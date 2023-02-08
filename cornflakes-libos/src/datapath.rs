@@ -5,7 +5,7 @@ use super::{
 };
 use color_eyre::eyre::{bail, Result};
 use std::{io::Write, net::Ipv4Addr, str::FromStr, time::Duration};
-use zero_copy_cache::data_structures::{ZeroCopyCache, Segment};
+use zero_copy_cache::data_structures::{Segment, ZeroCopyCache};
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum InlineMode {
@@ -215,6 +215,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CornflakesSegment {
     mempool_id: MempoolID,
+    registration_unit: usize,
     page_size: usize,
 }
 
@@ -229,11 +230,20 @@ impl Segment for CornflakesSegment {
 }
 
 impl CornflakesSegment {
-    pub fn new(id: MempoolID, page_size: usize) -> Self {
+    pub fn new(id: MempoolID, registration_unit: usize, page_size: usize) -> Self {
         CornflakesSegment {
             mempool_id: id,
+            registration_unit,
             page_size,
         }
+    }
+
+    pub fn get_registration_unit(&self) -> usize {
+        self.registration_unit
+    }
+
+    pub fn get_mempool_id(&self) -> MempoolID {
+        self.mempool_id
     }
 }
 
@@ -559,7 +569,7 @@ pub trait Datapath {
     fn recover_metadata(&self, buf: &[u8]) -> Result<Option<Self::DatapathMetadata>>;
 
     /// Takes a buffer and recovers underlying metadata, along with information about whether it is
-    /// currently pinned.
+    /// currently pinned and which segment it is within.
     /// Args:
     /// @buf: Buffer.
     fn recover_metadata_with_status(&self, _buf: &[u8]) -> Result<MetadataStatus<Self>>
@@ -578,16 +588,22 @@ pub trait Datapath {
     /// Returns:
     /// Vector of memory pool IDs for mempools that were created (datapath may have a maximum size
     /// for the memory pool).
-    fn add_memory_pool(&mut self, size: usize, min_elts: usize) -> Result<Vec<MempoolID>>;
+    fn add_memory_pool(
+        &mut self,
+        size: usize,
+        min_elts: usize,
+        num_registration_units: usize,
+        register_at_start: bool,
+    ) -> Result<Vec<MempoolID>>;
 
     /// Checks whether datapath has mempool of size size given (must be power of 2).
     fn has_mempool(&self, size: usize) -> bool;
 
     /// Register given mempool ID
-    fn register_mempool(&mut self, id: MempoolID) -> Result<()>;
+    fn register_segment(&mut self, seg: &CornflakesSegment) -> Result<()>;
 
-    /// Unregister given mempool ID
-    fn unregister_mempool(&mut self, id: MempoolID) -> Result<()>;
+    /// Unregister given Cornflakes Segment.
+    fn unregister_segment(&mut self, seg: &CornflakesSegment) -> Result<()>;
 
     fn header_size(&self) -> usize;
 
@@ -631,7 +647,7 @@ pub trait Datapath {
     }
 
     /// Zero copy cache stats
-    fn get_mut_zcc(&mut self) -> &mut ZeroCopyCache<CornflakesSegment>{
+    fn get_mut_zcc(&mut self) -> &mut ZeroCopyCache<CornflakesSegment> {
         unimplemented!()
     }
 }

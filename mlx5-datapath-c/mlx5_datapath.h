@@ -20,7 +20,11 @@ void Mlx5Connection_set_copying_threshold(void *conn, uintptr_t copying_threshol
 
 void Mlx5Connection_set_inline_mode(void *conn, uintptr_t inline_mode);
 
-void Mlx5Connection_add_memory_pool(void *conn, uintptr_t buf_size, uintptr_t min_elts);
+void Mlx5Connection_add_memory_pool(void *conn,
+                                    uintptr_t buf_size,
+                                    uintptr_t min_elts,
+                                    uintptr_t num_registration_units,
+                                    bool register_at_start);
 
 struct ReceivedPkt *Mlx5Connection_pop(void *conn, uintptr_t *n);
 

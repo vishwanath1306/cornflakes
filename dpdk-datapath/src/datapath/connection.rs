@@ -3,7 +3,9 @@ use super::{
 };
 use cornflakes_libos::{
     allocator::{align_up, MemoryPoolAllocator, MempoolID},
-    datapath::{Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt},
+    datapath::{
+        CornflakesSegment, Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt,
+    },
     utils::AddressInfo,
     ConnID, MsgID, OrderedSga, RcSga, RcSge, Sga, Sge, USING_REF_COUNTING,
 };
@@ -86,9 +88,7 @@ impl DatapathBufferOps for DpdkBuffer {
 impl DpdkBuffer {
     pub fn new(mbuf: *mut rte_mbuf) -> Self {
         unsafe { rte_pktmbuf_refcnt_set(mbuf, 1) }
-        DpdkBuffer {
-            mbuf: mbuf,
-        }
+        DpdkBuffer { mbuf: mbuf }
     }
 
     pub fn increment_refcnt(&mut self) {
@@ -1621,7 +1621,13 @@ impl Datapath for DpdkConnection {
     fn recover_metadata(&self, buf: &[u8]) -> Result<Option<Self::DatapathMetadata>> {
         self.allocator.recover_buffer(buf)
     }
-    fn add_memory_pool(&mut self, value_size: usize, min_elts: usize) -> Result<Vec<MempoolID>> {
+    fn add_memory_pool(
+        &mut self,
+        value_size: usize,
+        min_elts: usize,
+        _num_registration_units: usize,
+        _register_at_start: bool,
+    ) -> Result<Vec<MempoolID>> {
         let mut ret: Vec<MempoolID> = Vec::default();
         //let num_values = (min_num_values as f64 * 1.20) as usize;
         // find optimal number of values above this
@@ -1684,12 +1690,12 @@ impl Datapath for DpdkConnection {
         self.allocator.has_mempool(size)
     }
 
-    fn register_mempool(&mut self, id: MempoolID) -> Result<()> {
-        self.allocator.register(id, ())
+    fn register_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
+        self.allocator.register_segment(seg, ())
     }
 
-    fn unregister_mempool(&mut self, id: MempoolID) -> Result<()> {
-        self.allocator.unregister(id)
+    fn unregister_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
+        self.allocator.unregister_segment(seg)
     }
 
     fn header_size(&self) -> usize {

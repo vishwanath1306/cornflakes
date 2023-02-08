@@ -90,7 +90,7 @@ int custom_mlx5_gather_rx(struct custom_mlx5_per_thread_context *per_thread_cont
  * Returns:
  * 0 on success, error if error ocurred.
  * */
-int custom_mlx5_refill_rxqueue(struct custom_mlx5_per_thread_context *per_thread_context, size_t rx_cnt, struct registered_mempool *rx_mempool);
+int custom_mlx5_refill_rxqueue(struct custom_mlx5_per_thread_context *per_thread_context, size_t rx_cnt, struct custom_mlx5_mempool *rx_mempool);
 
 /* 
  * Starts the next transmission by writing in the header segment.
@@ -253,7 +253,9 @@ struct custom_mlx5_transmission_info *custom_mlx5_advance_completion_info(struct
  * Arguments:
  * @per_thread_context: mlx5 per thread context
  * @dpseg - Pointer to the dpseg.
- * @m - Pointer to data.
+ * @data - Pointer to data.
+ * @mempool - Mempool data comes from. Required to query lkey.
+ * @registation_unit - Registration unit inside mempool.
  * @data_off - data offset into mbuf.
  * @data_len - size of data to reference inside mbuf.
  *
@@ -263,7 +265,8 @@ struct custom_mlx5_transmission_info *custom_mlx5_advance_completion_info(struct
 struct mlx5_wqe_data_seg *custom_mlx5_add_dpseg(struct custom_mlx5_per_thread_context *per_thread_context,
                 struct mlx5_wqe_data_seg *dpseg,
                 void *data,
-                struct registered_mempool *mempool,
+                struct custom_mlx5_mempool *mempool,
+                size_t registration_unit,
                 size_t data_off,
                 size_t data_len);
 
@@ -282,7 +285,7 @@ struct mlx5_wqe_data_seg *custom_mlx5_add_dpseg(struct custom_mlx5_per_thread_co
 struct custom_mlx5_transmission_info *custom_mlx5_add_completion_info(struct custom_mlx5_per_thread_context *per_thread_context,
                 struct custom_mlx5_transmission_info *transmission_info,
                 void *data,
-                struct registered_mempool *mempool);
+                struct custom_mlx5_mempool *mempool);
 
 /* 
  * finish_one_transmission - Finishes a single transmission.

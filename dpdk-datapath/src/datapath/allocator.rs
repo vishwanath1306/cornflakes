@@ -5,8 +5,8 @@ use super::{
 use color_eyre::eyre::{bail, ensure, Result, WrapErr};
 use cornflakes_libos::{
     allocator::{DatapathMemoryPool, MempoolID},
-    datapath::Datapath,
-    mem::closest_2mb_page,
+    datapath::{CornflakesSegment, Datapath},
+    mem::{closest_2mb_page, PGSIZE_2MB},
 };
 
 /// Determine three parameters about the memory in the DPDK mempool:
@@ -234,15 +234,26 @@ impl DatapathMemoryPool for MempoolInfo {
         vec![]
     }
 
-    fn register(&mut self, _registration_context: Self::RegistrationContext) -> Result<()> {
+    fn get_segment_info(&self, mempool_id: MempoolID, _page: usize) -> CornflakesSegment {
+        CornflakesSegment::new(mempool_id, 0, PGSIZE_2MB)
+    }
+
+    fn register_segment(
+        &mut self,
+        _segment: &CornflakesSegment,
+        _registration_context: Self::RegistrationContext,
+    ) -> Result<()> {
+        tracing::info!("On demand registration not supported for dpdk datapath");
         Ok(())
     }
 
-    fn unregister(&mut self) -> Result<()> {
-        bail!("Cannot unregister DPDK memory pool");
+    /// Unregister the backing region behind this memory pool
+    fn unregister_segment(&mut self, _segment: &CornflakesSegment) -> Result<()> {
+        bail!("Cannot unregister segments from DPDK memory pool");
     }
 
-    fn is_registered(&self) -> bool {
+    /// Whether the entire backing region of the memory pool is registered
+    fn is_registered(&self, _segment: &CornflakesSegment) -> bool {
         true
     }
 
@@ -336,7 +347,6 @@ impl DatapathMemoryPool for MempoolInfo {
 
     fn alloc_data_buf(
         &self,
-        _context: MempoolID,
     ) -> Result<Option<<<Self as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathBuffer>>
     {
         let mbuf = unsafe { rte_pktmbuf_alloc(self.handle) };
