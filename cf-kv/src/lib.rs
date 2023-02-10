@@ -38,7 +38,7 @@ use std::{
 };
 
 pub static mut MIN_MEMPOOL_SIZE: usize = 262144;
-const NUM_REGISTRATIONS: usize = 1;
+pub static mut NUM_REGISTRATIONS: usize = 1;
 const REGISTER_AT_ALLOC: bool = true;
 
 // 8 bytes at front of message for framing
@@ -469,7 +469,7 @@ where
             mempool_ids.append(&mut datapath.add_memory_pool(
                 size,
                 unsafe { MIN_MEMPOOL_SIZE },
-                NUM_REGISTRATIONS,
+                unsafe { NUM_REGISTRATIONS },
                 REGISTER_AT_ALLOC,
             )?);
             tracing::info!("Added mempool");

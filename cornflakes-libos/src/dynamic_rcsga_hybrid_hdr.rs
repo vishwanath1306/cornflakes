@@ -363,8 +363,9 @@ where
         match datapath.recover_metadata_with_status(ptr)? {
             MetadataStatus::Pinned((x, y)) => {
                 let zcc = datapath.get_mut_zcc();
+                zcc.update_stats(&y);
                 println!(
-                    "Stats for pinned segment {:?} is: {}",
+                    "Stats for pinned segment {:?} is: {:?}",
                     y.get_segment_id(),
                     zcc.get_segment_access_count(y)
                 );
@@ -373,7 +374,10 @@ where
             MetadataStatus::UnPinned((_x, y)) => {
                 let zcc = datapath.get_mut_zcc();
                 zcc.update_stats(&y);
-                println!("Stats in unpinned is: {}", zcc.get_segment_access_count(y));
+                println!(
+                    "Stats in unpinned is: {:?}",
+                    zcc.get_segment_access_count(y)
+                );
                 Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?))
             }
             MetadataStatus::Arbitrary => Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?)),

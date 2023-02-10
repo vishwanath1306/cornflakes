@@ -428,7 +428,7 @@ struct mlx5_wqe_data_seg *custom_mlx5_add_dpseg(struct custom_mlx5_per_thread_co
                 size_t registration_unit,
                 size_t data_off,
                 size_t data_len) {
-    NETPERF_DEBUG("Dpseg being filled in: %p, data_len: %lu, addr: %p, lkey: %u", dpseg, data_len, data, mempool->mr->lkey);
+    NETPERF_DEBUG("Dpseg being filled in: %p, data_len: %lu, addr: %p, lkey: %u", dpseg, data_len, data, mempool->registrations[registration_unit].lkey);
     struct custom_mlx5_txq *v = &per_thread_context->txq;
     dpseg->byte_count = htobe32(data_len);
     dpseg->addr = htobe64((uint64_t)((char *)data + data_off));

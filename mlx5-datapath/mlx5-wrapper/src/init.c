@@ -121,9 +121,9 @@ int custom_mlx5_register_mempool_unit(struct custom_mlx5_global_context *context
             return -errno;
         }
         info->lkey = info->mr->lkey;
-        NETPERF_DEBUG("Registering mempool %p; with lkey %u", mempool, info->lkey);
+        NETPERF_DEBUG("Registering mempool %p reg unit %lu; with lkey %u", mempool, registration_unit, info->lkey);
     } else {
-        NETPERF_DEBUG("Registering mempool %p already registered; doing nothing.");
+        NETPERF_DEBUG("Registering mempool %p reg unit %lu already registered; doing nothing", mempool, registration_unit);
     }
     return 0;
 }

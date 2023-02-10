@@ -55,6 +55,9 @@ void *custom_mlx5_mempool_alloc(struct custom_mlx5_mempool *m)
 		return NULL;
 	item = m->free_items[m->allocated++];
 	__custom_mlx5_mempool_alloc_debug_check(m, item);
+    if (item == NULL) {
+        NETPERF_DEBUG("Allocated null in mempool alloc: allocated: %lu, cap: %lu, mempool: %p", m->allocated, m->capacity, m);
+    }
 	return item;
 }
 
@@ -136,7 +139,7 @@ static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m) {
 		}
 	}
 
-    NETPERF_DEBUG("Allocated Items per page: %u, item_len: %zu, # pages: %u, LEN: %zu, current capacity: %zu", (unsigned)items_per_page, m->item_len, (unsigned)nr_pages, len, m->capacity);
+    NETPERF_DEBUG("Allocated Items per page: %u, item_len: %zu, # pages: %u, LEN: %zu, current capacity: %zu", (unsigned)items_per_page, m->item_len, (unsigned)nr_pages, m->len, m->capacity);
 
     m->registrations = calloc(nr_registrations, sizeof(struct custom_mlx5_registration_info));
     if (!m->registrations) {

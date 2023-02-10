@@ -52,6 +52,7 @@ impl DataMempool {
         use_atomic_ops: bool,
         register_at_alloc: bool,
     ) -> Result<Self> {
+        println!("Allocating mempool with params: {:?}", mempool_params);
         let mempool_box = vec![0u8; unsafe { custom_mlx5_get_custom_mlx5_mempool_size() } as _]
             .into_boxed_slice();
         let atomic_ops: u32 = match use_atomic_ops {
@@ -268,23 +269,21 @@ impl DatapathMemoryPool for DataMempool {
     ) -> Result<Option<<<Self as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathBuffer>>
     {
         let data = unsafe { custom_mlx5_mempool_alloc(self.mempool()) };
+        if data.is_null() {
+            return Ok(None);
+        }
         let registration_unit = unsafe {
             custom_mlx5_mempool_find_registration_unit(
                 self.mempool(),
                 closest_2mb_page(data as *const u8) as *mut ::std::os::raw::c_void,
             )
         };
-        if data.is_null() {
-            tracing::debug!("Returning ok none ok");
-            return Ok(None);
-        }
         // recover the ref count index
         let index = unsafe { custom_mlx5_mempool_find_index(self.mempool(), data) };
         if index == -1 {
             unsafe {
                 custom_mlx5_mempool_free(self.mempool(), data);
             }
-            tracing::debug!("Couldn't find index");
             return Ok(None);
         }
         Ok(Some(Mlx5Buffer::new(

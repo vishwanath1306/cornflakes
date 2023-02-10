@@ -116,7 +116,7 @@ impl Mlx5Buffer {
         data_len: usize,
     ) -> Self {
         unsafe {
-            custom_mlx5_refcnt_update_or_free(mempool, data, index as _, 1);
+            custom_mlx5_refcnt_update_or_free(mempool, data, refcnt_index as _, 1);
         }
         Mlx5Buffer {
             data,

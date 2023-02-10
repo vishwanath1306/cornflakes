@@ -32,7 +32,7 @@ impl MempoolAllocationParams {
     }
 
     pub fn get_registration_unit(&self) -> usize {
-        self.data_pgsize * self.num_registrations
+        self.num_data_pages / self.num_registrations * self.data_pgsize
     }
 
     pub fn get_num_items(&self) -> usize {
