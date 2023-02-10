@@ -6,6 +6,14 @@
 
 #include <base/stddef.h>
 #include <base/debug.h>
+#include <infiniband/mlx5dv.h>
+#include <infiniband/verbs.h>
+
+struct custom_mlx5_registration_info {
+    int32_t lkey;
+    struct ibv_mr *mr;
+    void *starting_address;
+};
 
 struct custom_mlx5_mempool {
     void **free_items; /* Array of pointers to free items. */
@@ -18,13 +26,13 @@ struct custom_mlx5_mempool {
     size_t item_len; /* Length of mempool items. Must be aligned to page size. */
     size_t log_item_len; /* Log of the item len*/
     size_t num_pages; /* Number of pages */
-    int32_t lkey; /* Lkey for the memory region backed by mempool. -1 if not registered. */
+    size_t registration_len; /* Size of each registration unit */
+    size_t nr_registrations; /* Number of registrations */
+    struct custom_mlx5_registration_info *registrations; /* Array of registrations */
     uint32_t use_atomic_ops; /* Whether to use atomic operations to update the refcnt. */
 };
 
 int custom_mlx5_is_allocated(struct custom_mlx5_mempool *mempool);
-
-int custom_mlx5_is_registered(struct custom_mlx5_mempool *mempool);
 
 void custom_mlx5_clear_mempool(struct custom_mlx5_mempool *mempool);
 
@@ -36,16 +44,18 @@ static inline void __custom_mlx5_mempool_alloc_debug_check(struct custom_mlx5_me
 static inline void __custom_mlx5_mempool_free_debug_check(struct custom_mlx5_mempool *m, void *item) {}
 #endif /* DEBUG */
 
+/*
+ * custom_mlx5_mempool_is_registered - Checks if the given registration unit is
+ * registered currently.
+ */
+int custom_mlx5_is_registered(struct custom_mlx5_mempool *mempool, size_t registration_unit);
 
-/* Registers mempool to include lkey information. */
-static inline void custom_mlx5_register_mempool(struct custom_mlx5_mempool *mempool, uint32_t lkey) {
-    mempool->lkey = (int32_t)lkey;
-}
+/**
+ * custom_mlx5_mempool_find_registration_unit - Finds the registration unit
+ * corresponding to a page start address.
+ */
+size_t custom_mlx5_mempool_find_registration_unit(struct custom_mlx5_mempool *mempool, void *page_address);
 
-/* Removes lkey information from the mempool.*/
-static inline void custom_mlx5_deregister_mempool(struct custom_mlx5_mempool *mempool) {
-    mempool->lkey = -1;
-}
 
 /**
  * mempool_find_index - Finds the allocated index of an item from the pool.
@@ -101,11 +111,12 @@ static inline void custom_mlx5_mempool_free_by_idx(struct custom_mlx5_mempool *m
 
 }
 
-extern int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m,
+int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m,
                             size_t len,
                             size_t pgsize,
                             size_t item_len,
+                            size_t registration_unit,
                             uint32_t use_atomic_ops);
 
-extern void custom_mlx5_mempool_destroy(struct custom_mlx5_mempool *m);
+void custom_mlx5_mempool_destroy(struct custom_mlx5_mempool *m);
 

@@ -45,17 +45,17 @@ struct __attribute__((__packed__)) custom_mlx5_transmission_info {
         } metadata;
         void *data;
     } info;
-    struct registered_mempool *mempool;
+    struct custom_mlx5_mempool *mempool;
 };
 
 struct __attribute__((__packed__)) custom_mlx5_rx_buffer {
     void *buf_addr;
-    struct registered_mempool *mempool;
+    struct custom_mlx5_mempool *mempool;
 };
 
 struct recv_mbuf_info {
     void *buf_addr;
-    struct registered_mempool *mempool;
+    struct custom_mlx5_mempool *mempool;
     size_t ref_count_index;
     uint32_t pkt_len;
     uint32_t rss_hash;
@@ -125,17 +125,7 @@ struct custom_mlx5_txq {
 	struct ibv_qp *tx_qp;
 };
 
-/* A registered memory pool. 
- * TODO: is it right for each mempool to have a unique registered / MR region.
- * Or can different `mempools` share the same backing registered region? */
-struct registered_mempool {
-    struct custom_mlx5_mempool data_mempool;
-    struct ibv_mr *mr; /* If this is null, this means the mempool isn't registered. */
-};
-
 void check_wqe_cnt(struct custom_mlx5_txq *v, size_t original_cnt);
-
-void custom_mlx5_clear_registered_mempool(struct registered_mempool *mempool);
 
 struct custom_mlx5_global_context {
     struct ibv_context *ibv_context; /* IBV Context */
@@ -157,7 +147,7 @@ struct custom_mlx5_per_thread_context {
     struct custom_mlx5_global_context *global_context; /* Pointer back to the global context. */
     struct custom_mlx5_rxq rxq; /* Rxq for receiving packets. */
     struct custom_mlx5_txq txq; /* Txq for sending packets. */
-    struct registered_mempool *rx_mempool; /* Receive mempool associated with the rxq. */
+    struct custom_mlx5_mempool *rx_mempool; /* Receive mempool associated with the rxq. */
 };
 
 /* Given index into threads array, get per thread context. */

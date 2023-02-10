@@ -8,27 +8,13 @@ include!(concat!(env!("OUT_DIR"), "/mlx5_bindings.rs"));
 
 #[link(name = "mlx5inlined")]
 extern "C" {
-    fn custom_mlx5_free_mbuf_(mbuf: *mut custom_mlx5_mbuf);
-
     fn ns_to_cycles_(a: u64) -> u64;
 
     fn cycles_to_ns_(a: u64) -> u64;
 
     fn current_cycles_() -> u64;
 
-    fn alloc_data_buf_(mempool: *mut registered_mempool) -> *mut ::std::os::raw::c_void;
-
-    fn get_data_mempool_(mempool: *mut registered_mempool) -> *mut custom_mlx5_mempool;
-
-    fn custom_mlx5_mbuf_offset_ptr_(
-        mbuf: *mut custom_mlx5_mbuf,
-        off: usize,
-    ) -> *mut ::std::os::raw::c_void;
-
-    fn custom_mlx5_mbuf_at_index_(
-        mempool: *mut custom_mlx5_mempool,
-        index: usize,
-    ) -> *mut custom_mlx5_mbuf;
+    fn alloc_data_buf_(mempool: *mut custom_mlx5_mempool) -> *mut ::std::os::raw::c_void;
 
     fn mlx5_rte_memcpy_(
         dst: *mut ::std::os::raw::c_void,
@@ -57,11 +43,6 @@ extern "C" {
 }
 
 #[inline]
-pub unsafe fn custom_mlx5_free_mbuf(mbuf: *mut custom_mlx5_mbuf) {
-    custom_mlx5_free_mbuf_(mbuf);
-}
-
-#[inline]
 pub unsafe fn ns_to_cycles(a: u64) -> u64 {
     ns_to_cycles_(a)
 }
@@ -77,29 +58,8 @@ pub unsafe fn current_cycles() -> u64 {
 }
 
 #[inline]
-pub unsafe fn alloc_data_buf(mempool: *mut registered_mempool) -> *mut ::std::os::raw::c_void {
+pub unsafe fn alloc_data_buf(mempool: *mut custom_mlx5_mempool) -> *mut ::std::os::raw::c_void {
     alloc_data_buf_(mempool)
-}
-
-#[inline]
-pub unsafe fn get_data_mempool(mempool: *mut registered_mempool) -> *mut custom_mlx5_mempool {
-    get_data_mempool_(mempool)
-}
-
-#[inline]
-pub unsafe fn custom_mlx5_mbuf_offset_ptr(
-    mbuf: *mut custom_mlx5_mbuf,
-    off: usize,
-) -> *mut ::std::os::raw::c_void {
-    custom_mlx5_mbuf_offset_ptr_(mbuf, off)
-}
-
-#[inline]
-pub unsafe fn custom_mlx5_mbuf_at_index(
-    mempool: *mut custom_mlx5_mempool,
-    index: usize,
-) -> *mut custom_mlx5_mbuf {
-    custom_mlx5_mbuf_at_index_(mempool, index)
 }
 
 #[inline]

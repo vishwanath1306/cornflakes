@@ -55,9 +55,23 @@ void *custom_mlx5_mempool_alloc(struct custom_mlx5_mempool *m)
 		return NULL;
 	item = m->free_items[m->allocated++];
 	__custom_mlx5_mempool_alloc_debug_check(m, item);
+    if (item == NULL) {
+        NETPERF_DEBUG("Allocated null in mempool alloc: allocated: %lu, cap: %lu, mempool: %p", m->allocated, m->capacity, m);
+    }
 	return item;
 }
 
+int custom_mlx5_is_registered(struct custom_mlx5_mempool *mempool, size_t registration_unit) {
+    if (mempool->registrations[registration_unit].lkey != -1 && mempool->registrations[registration_unit].mr != NULL) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+size_t custom_mlx5_mempool_find_registration_unit(struct custom_mlx5_mempool *mempool, void *page_address) {
+    return (size_t)(((char *)page_address - (char *)mempool->buf) / mempool->registration_len);
+}
 int custom_mlx5_mempool_find_index(struct custom_mlx5_mempool *m, void *item) {
     // todo: MAKE THIS PANIC ON TRUE?
     /*if ((char *)item < (char *)m->buf && (char *)item >= ((char *)m->buf + m->len)) {
@@ -87,14 +101,6 @@ void custom_mlx5_mempool_free(struct custom_mlx5_mempool *m, void *item) {
 }
 
 
-int custom_mlx5_is_registered(struct custom_mlx5_mempool *mempool) {
-    if (mempool->lkey != -1) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
 void custom_mlx5_clear_mempool(struct custom_mlx5_mempool *mempool) {
     mempool->free_items = NULL;
     mempool->allocated = 0;
@@ -103,14 +109,15 @@ void custom_mlx5_clear_mempool(struct custom_mlx5_mempool *mempool) {
     mempool->len = 0;
     mempool->pgsize = 0;
     mempool->item_len = 0;
-    mempool->lkey = -1;
+    mempool->registrations = NULL;
+    mempool->registration_len = 0;
 }
 
-static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m, void *buf, size_t len,
-			    size_t pgsize, size_t item_len)
-{
-	size_t items_per_page = pgsize / item_len;
-	size_t nr_pages = len / pgsize;
+static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m) {
+	size_t items_per_page = m->pgsize / m->item_len;
+	size_t nr_pages = m->len / m->pgsize;
+    size_t nr_registrations = m->len / m->registration_len;
+    m->nr_registrations = nr_registrations;
 	int i, j;
 
 	m->free_items = calloc(nr_pages * items_per_page, sizeof(void *));
@@ -127,12 +134,24 @@ static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m, void *buf
 	for (i = 0; i < nr_pages; i++) {
 		for (j = 0; j < items_per_page; j++) {
 			m->free_items[m->capacity++] =
-				(char *)buf + pgsize * i + item_len * j;
+				(char *)m->buf + m->pgsize * i + m->item_len * j;
             m->ref_counts[i * j] = 0;
 		}
 	}
 
-    NETPERF_DEBUG("Allocated Items per page: %u, item_len: %zu, # pages: %u, LEN: %zu, current capacity: %zu", (unsigned)items_per_page, m->item_len, (unsigned)nr_pages, len, m->capacity);
+    NETPERF_DEBUG("Allocated Items per page: %u, item_len: %zu, # pages: %u, LEN: %zu, current capacity: %zu", (unsigned)items_per_page, m->item_len, (unsigned)nr_pages, m->len, m->capacity);
+
+    m->registrations = calloc(nr_registrations, sizeof(struct custom_mlx5_registration_info));
+    if (!m->registrations) {
+        NETPERF_DEBUG("Calloc didn't allocate registrations.");
+        return -ENOMEM;
+    }
+    /* Initialize all registrations to be unregistrered */
+    for (i = 0; i < nr_registrations; i++) {
+        m->registrations[i].lkey = -1;
+        m->registrations[i].mr = NULL;
+        m->registrations[i].starting_address = m->buf + i * m->registration_len;
+    }
 	return 0;
 }
 
@@ -144,7 +163,7 @@ static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m, void *buf
  * @item_len: the length of each item in the pool
  */
 int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m, size_t len,
-		   size_t pgsize, size_t item_len, uint32_t use_atomic_ops)
+		   size_t pgsize, size_t item_len, size_t registration_unit, uint32_t use_atomic_ops)
 {
 	if (item_len == 0 || !is_power_of_two(pgsize) || len % pgsize != 0) {
         NETPERF_WARN("Invalid params to create mempool.");
@@ -171,8 +190,9 @@ int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m, size_t len,
 	m->item_len = item_len;
     m->log_item_len = (size_t)(log2((float)item_len));
     m->use_atomic_ops = use_atomic_ops;
+    m->registration_len = registration_unit;
 
-	return custom_mlx5_mempool_populate(m, buf, len, pgsize, item_len);
+	return custom_mlx5_mempool_populate(m);
 }
 
 /**
@@ -184,5 +204,7 @@ int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m, size_t len,
 void custom_mlx5_mempool_destroy(struct custom_mlx5_mempool *m)
 {
 	free(m->free_items);
+    free(m->registrations);
     munmap(m->buf, m->len);
+    return;
 }

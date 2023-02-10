@@ -1,13 +1,12 @@
 use super::{
-    datapath::{Datapath, MetadataOps, ReceivedPkt, MetadataStatus},
+    datapath::{Datapath, MetadataOps, MetadataStatus, ReceivedPkt},
     ArenaDatapathSga, CopyContext, CopyContextRef,
 };
 use bitmaps::Bitmap;
 use byteorder::{ByteOrder, LittleEndian};
 use color_eyre::eyre::{Result, WrapErr};
-use zero_copy_cache::data_structures::Segment;
 use std::{default::Default, marker::PhantomData, ops::Index, slice::Iter, str};
-
+use zero_copy_cache::data_structures::Segment;
 
 #[inline]
 pub fn write_size_and_offset(write_offset: usize, size: usize, offset: usize, buffer: &mut [u8]) {
@@ -362,25 +361,26 @@ where
         }
 
         match datapath.recover_metadata_with_status(ptr)? {
-
-            MetadataStatus::Pinned((x,y)) => {
+            MetadataStatus::Pinned((x, y)) => {
                 let zcc = datapath.get_mut_zcc();
                 zcc.update_stats(&y);
-                // let segment_id = y.get_segment_id();
-                // zcc.calculate_hotset();
-                // println!("The current hotset is: {:?}", zcc.current_pinned_list);
-                // println!("Stats for pinned segment {} is: {}", segment_id, zcc.get_segment_access_count(y));
+                println!(
+                    "Stats for pinned segment {:?} is: {:?}",
+                    y.get_segment_id(),
+                    zcc.get_segment_access_count(y)
+                );
                 Ok(CFBytes::RefCounted(x))
-            },
-            MetadataStatus::UnPinned((x,y)) => {
+            }
+            MetadataStatus::UnPinned((_x, y)) => {
                 let zcc = datapath.get_mut_zcc();
                 zcc.update_stats(&y);
-                println!("Stats in unpinned is: {}", zcc.get_segment_access_count(y));
-                Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?))
-            },
-            MetadataStatus::Arbitrary => {
+                println!(
+                    "Stats in unpinned is: {:?}",
+                    zcc.get_segment_access_count(y)
+                );
                 Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?))
             }
+            MetadataStatus::Arbitrary => Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?)),
         }
     }
 

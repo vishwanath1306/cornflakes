@@ -1,5 +1,4 @@
 #include <base/mempool.h>
-#include <base/mbuf.h>
 #include <base/rte_memcpy.h>
 #include <base/time.h>
 #include <mlx5/mlx5.h>
@@ -7,10 +6,6 @@
 #include <net/ethernet.h>
 #include <net/ip.h>
 #include <net/udp.h>
-
-void custom_mlx5_free_mbuf_(struct custom_mlx5_mbuf *metadata_mbuf) {
-    custom_mlx5_mbuf_free(metadata_mbuf);
-}
 
 uint64_t ns_to_cycles_(uint64_t a) {
     return custom_mlx5_ns_to_cycles(a);
@@ -24,20 +19,8 @@ uint64_t current_cycles_() {
     return custom_mlx5_microcycles();
 }
 
-void *alloc_data_buf_(struct registered_mempool *mempool) {
-    return (void *)(custom_mlx5_mempool_alloc(&(mempool->data_mempool)));
-}
-
-struct custom_mlx5_mempool *get_data_mempool_(struct registered_mempool *mempool) {
-    return (struct custom_mlx5_mempool *)(&(mempool->data_mempool));
-}
-
-void *custom_mlx5_mbuf_offset_ptr_(struct custom_mlx5_mbuf *mbuf, size_t off) {
-    return (void *)custom_mlx5_mbuf_offset_ptr(mbuf, off);
-}
-
-struct custom_mlx5_mbuf *custom_mlx5_mbuf_at_index_(struct custom_mlx5_mempool *mempool, size_t index) {
-    return (struct custom_mlx5_mbuf *)((char *)mempool->buf + (index << mempool->log_item_len));
+void *alloc_data_buf_(struct custom_mlx5_mempool *mempool) {
+    return (void *)(custom_mlx5_mempool_alloc(mempool));
 }
 
 void mlx5_rte_memcpy_(void *dst, const void *src, size_t n) {

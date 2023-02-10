@@ -5,7 +5,9 @@ use super::{
 };
 use cornflakes_libos::{
     allocator::{MemoryPoolAllocator, MempoolID},
-    datapath::{CornflakesSegment, Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt},
+    datapath::{
+        CornflakesSegment, Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt,
+    },
     dynamic_rcsga_hybrid_hdr::HybridArenaRcSgaHdr,
     dynamic_sga_hdr::SgaHeaderRepr,
     mem::PGSIZE_2MB,
@@ -38,13 +40,16 @@ const COMPLETION_BUDGET: usize = 32;
 const RECEIVE_BURST_SIZE: usize = 32;
 const MAX_BUFFER_SIZE: usize = 16384;
 const MEMPOOL_MIN_ELTS: usize = 8192;
+const TX_POOL_NUM_REGISTRATIONS: usize = 1;
 
 #[derive(PartialEq, Eq)]
 pub struct Mlx5Buffer {
     /// Underlying data pointer
     data: *mut ::std::os::raw::c_void,
     /// Pointer back to the data and metadata pool pair
-    mempool: *mut registered_mempool,
+    mempool: *mut custom_mlx5_mempool,
+    /// Registration unit associated with this buffer.
+    registration_unit: u64,
     /// Refcnt index
     refcnt_index: usize,
     /// Data len,
@@ -67,6 +72,7 @@ impl Clone for Mlx5Buffer {
             data: self.data,
             mempool: self.mempool,
             refcnt_index: self.refcnt_index,
+            registration_unit: self.registration_unit,
             data_len: self.data_len,
         }
     }
@@ -78,6 +84,7 @@ impl Default for Mlx5Buffer {
             data: std::ptr::null_mut(),
             mempool: std::ptr::null_mut(),
             refcnt_index: 0,
+            registration_unit: 0,
             data_len: 0,
         }
     }
@@ -103,18 +110,20 @@ impl Drop for Mlx5Buffer {
 impl Mlx5Buffer {
     pub fn new(
         data: *mut ::std::os::raw::c_void,
-        mempool: *mut registered_mempool,
-        index: usize,
+        mempool: *mut custom_mlx5_mempool,
+        registration_unit: u64,
+        refcnt_index: usize,
         data_len: usize,
     ) -> Self {
         unsafe {
-            custom_mlx5_refcnt_update_or_free(mempool, data, index as _, 1);
+            custom_mlx5_refcnt_update_or_free(mempool, data, refcnt_index as _, 1);
         }
         Mlx5Buffer {
-            data: data,
-            mempool: mempool,
-            refcnt_index: index,
-            data_len: data_len,
+            data,
+            mempool,
+            registration_unit,
+            refcnt_index,
+            data_len,
         }
     }
 
@@ -133,14 +142,21 @@ impl Mlx5Buffer {
         self,
     ) -> (
         *mut ::std::os::raw::c_void,
-        *mut registered_mempool,
+        *mut custom_mlx5_mempool,
+        u64,
         usize,
         usize,
     ) {
-        (self.data, self.mempool, self.refcnt_index, self.data_len)
+        (
+            self.data,
+            self.mempool,
+            self.registration_unit,
+            self.refcnt_index,
+            self.data_len,
+        )
     }
 
-    pub fn get_mempool(&self) -> *mut registered_mempool {
+    pub fn get_mempool(&self) -> *mut custom_mlx5_mempool {
         self.mempool
     }
 
@@ -148,7 +164,7 @@ impl Mlx5Buffer {
         tracing::debug!(
             start = start,
             end = end,
-            item_len = unsafe { access!(get_data_mempool(self.mempool), item_len, usize) },
+            item_len = unsafe { access!(self.mempool, item_len, usize) },
             "Getting mutable slice from buffer"
         );
         let buf = unsafe {
@@ -193,7 +209,7 @@ impl AsRef<[u8]> for Mlx5Buffer {
 impl std::io::Write for Mlx5Buffer {
     #[inline]
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let item_len = unsafe { access!(get_data_mempool(self.mempool), item_len, usize) };
+        let item_len = unsafe { access!(self.mempool, item_len, usize) };
         let bytes_to_write = std::cmp::min(bytes.len(), item_len - self.data_len);
         let buf_addr = (self.data as usize + self.data_len) as *mut u8;
         let mut buf = unsafe { std::slice::from_raw_parts_mut(buf_addr, bytes_to_write) };
@@ -216,7 +232,9 @@ pub struct MbufMetadata {
     /// Pointer to beginning of allocated data.
     pub data: *mut ::std::os::raw::c_void,
     /// Pointer to registered mempool.
-    pub mempool: *mut registered_mempool,
+    pub mempool: *mut custom_mlx5_mempool,
+    /// Registration unit associated with mbuf.
+    pub registration_unit: u64,
     /// Reference count index.
     pub refcnt_index: usize,
     /// Application data offset
@@ -228,7 +246,8 @@ pub struct MbufMetadata {
 impl MbufMetadata {
     pub fn new(
         data: *mut ::std::os::raw::c_void,
-        mempool: *mut registered_mempool,
+        mempool: *mut custom_mlx5_mempool,
+        registration_unit: u64,
         refcnt_index: usize,
         offset: usize,
         len: usize,
@@ -239,20 +258,23 @@ impl MbufMetadata {
             }
         }
         MbufMetadata {
-            data: data,
-            mempool: mempool,
-            refcnt_index: refcnt_index,
-            offset: offset,
-            len: len,
+            data,
+            mempool,
+            registration_unit,
+            refcnt_index,
+            offset,
+            len,
         }
     }
     pub fn from_buf(mut mlx5_buffer: Mlx5Buffer) -> Self {
         mlx5_buffer.update_refcnt(1);
-        let (buf, registered_mempool, refcnt_index, data_len) = mlx5_buffer.get_inner();
+        let (buf, custom_mlx5_mempool, registration_unit, refcnt_index, data_len) =
+            mlx5_buffer.get_inner();
         MbufMetadata {
             data: buf,
-            mempool: registered_mempool,
-            refcnt_index: refcnt_index,
+            mempool: custom_mlx5_mempool,
+            registration_unit,
+            refcnt_index,
             offset: 0,
             len: data_len,
         }
@@ -264,8 +286,12 @@ impl MbufMetadata {
         }
     }
 
-    pub fn mempool(&self) -> *mut registered_mempool {
+    pub fn mempool(&self) -> *mut custom_mlx5_mempool {
         self.mempool
+    }
+
+    pub fn registration_unit(&self) -> u64 {
+        self.registration_unit
     }
 
     pub fn data(&self) -> *mut ::std::os::raw::c_void {
@@ -283,7 +309,7 @@ impl MetadataOps for MbufMetadata {
     }
 
     fn set_data_len_and_offset(&mut self, len: usize, offset: usize) -> Result<()> {
-        let item_len = unsafe { (*self.mempool).data_mempool.item_len };
+        let item_len = unsafe { access!(self.mempool, item_len, usize) };
         ensure!(offset <= item_len as _, "Offset too large");
         ensure!(
             (offset + len) <= item_len as _,
@@ -301,6 +327,7 @@ impl Default for MbufMetadata {
         MbufMetadata {
             data: ptr::null_mut(),
             mempool: ptr::null_mut(),
+            registration_unit: 0,
             refcnt_index: 0,
             offset: 0,
             len: 0,
@@ -329,6 +356,7 @@ impl Clone for MbufMetadata {
         MbufMetadata::new(
             self.data,
             self.mempool,
+            self.registration_unit,
             self.refcnt_index,
             self.offset,
             self.len,
@@ -340,8 +368,8 @@ impl std::fmt::Debug for MbufMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "Data addr: {:?}, mempool: {:?}, refcnt_index: {}, off: {}, len: {}",
-            self.data, self.mempool, self.refcnt_index, self.offset, self.len
+            "Data addr: {:?}, mempool: {:?}, registration_unit: {}, refcnt_index: {}, off: {}, len: {}",
+            self.data, self.mempool, self.registration_unit, self.refcnt_index, self.offset, self.len
         )
     }
 }
@@ -572,7 +600,7 @@ pub struct Mlx5Connection {
     /// header buffer to use while posting entries
     header_buffer: Vec<u8>,
     /// Zero copy cache object
-    zero_copy_cache: ZeroCopyCache<CornflakesSegment>
+    zero_copy_cache: ZeroCopyCache<CornflakesSegment>,
 }
 
 impl Mlx5Connection {
@@ -671,6 +699,7 @@ impl Mlx5Connection {
         let datapath_metadata = MbufMetadata::new(
             unsafe { (*recv_mbuf).buf_addr },
             unsafe { (*recv_mbuf).mempool },
+            0, // registration unit is 0 for rx buffer
             unsafe { (*recv_mbuf).ref_count_index as _ },
             cornflakes_libos::utils::TOTAL_HEADER_SIZE,
             data_len,
@@ -993,6 +1022,7 @@ impl Mlx5Connection {
                     curr_dpseg,
                     metadata_mbuf.data(),
                     metadata_mbuf.mempool(),
+                    metadata_mbuf.registration_unit(),
                     metadata_mbuf.offset() as _,
                     metadata_mbuf.data_len() as _,
                 ),
@@ -1987,7 +2017,7 @@ impl Datapath for Mlx5Connection {
                 let mut rx_mempool_ptrs: Vec<*mut [u8]> = Vec::with_capacity(num_queues as _);
                 for i in 0..num_queues {
                     let rx_mempool_box: Box<[u8]> =
-                        vec![0; custom_mlx5_get_registered_mempool_size() as _].into_boxed_slice();
+                        vec![0; custom_mlx5_get_custom_mlx5_mempool_size() as _].into_boxed_slice();
                     let rx_mempool_ptr = Box::<[u8]>::into_raw(rx_mempool_box);
                     tracing::debug!("Allocated rx mempool ptr at {:?}", rx_mempool_ptr);
                     custom_mlx5_set_rx_mempool_ptr(
@@ -2010,6 +2040,7 @@ impl Datapath for Mlx5Connection {
                         sizes::RX_MEMPOOL_MIN_NUM_ITEMS,
                         sizes::RX_MEMPOOL_DATA_PGSIZE,
                         sizes::RX_MEMPOOL_DATA_LEN,
+                        sizes::RX_MEMPOOL_NUM_REGISTRATIONS,
                     )
                     .wrap_err("Incorrect rx allocation params")?;
                 check_ok!(custom_mlx5_init_rx_mempools(
@@ -2077,11 +2108,15 @@ impl Datapath for Mlx5Connection {
     {
         let rx_mempool = DataMempool::new_from_ptr(context.get_recv_mempool_ptr());
         // allocate a tx mempool
-        let mempool_params =
-            sizes::MempoolAllocationParams::new(MEMPOOL_MIN_ELTS, PGSIZE_2MB, MAX_BUFFER_SIZE)
-                .wrap_err("Incorrect mempool allocation params")?;
+        let mempool_params = sizes::MempoolAllocationParams::new(
+            MEMPOOL_MIN_ELTS,
+            PGSIZE_2MB,
+            MAX_BUFFER_SIZE,
+            TX_POOL_NUM_REGISTRATIONS,
+        )
+        .wrap_err("Incorrect mempool allocation params")?;
         tracing::debug!(mempool_params = ?mempool_params, "Adding tx mempool");
-        let tx_mempool = DataMempool::new(&mempool_params, &context, false)?;
+        let tx_mempool = DataMempool::new(&mempool_params, &context, false, true)?;
 
         let allocator = MemoryPoolAllocator::new(rx_mempool, tx_mempool)?;
 
@@ -2296,6 +2331,7 @@ impl Datapath for Mlx5Connection {
                             dpseg,
                             metadata_mbuf.data(),
                             metadata_mbuf.mempool(),
+                            metadata_mbuf.registration_unit(),
                             metadata_mbuf.offset() as _,
                             metadata_mbuf.data_len() as _,
                         );
@@ -2455,6 +2491,7 @@ impl Datapath for Mlx5Connection {
                             dpseg,
                             metadata_mbuf.data(),
                             metadata_mbuf.mempool(),
+                            metadata_mbuf.registration_unit(),
                             metadata_mbuf.offset() as _,
                             metadata_mbuf.data_len() as _,
                         );
@@ -2541,6 +2578,7 @@ impl Datapath for Mlx5Connection {
                             curr_dpseg,
                             seg.data(),
                             seg.mempool(),
+                            seg.registration_unit(),
                             0,
                             (seg.data_len() + cornflakes_libos::utils::TOTAL_HEADER_SIZE) as _,
                         );
@@ -3230,6 +3268,7 @@ impl Datapath for Mlx5Connection {
                                         dpseg,
                                         mbuf_metadata.data(),
                                         mbuf_metadata.mempool(),
+                                        mbuf_metadata.registration_unit(),
                                         mbuf_metadata.offset() as _,
                                         mbuf_metadata.data_len() as _,
                                     ),
@@ -3622,6 +3661,7 @@ impl Datapath for Mlx5Connection {
                     ring_buffer_state.0,
                     metadata_mbuf.data(),
                     metadata_mbuf.mempool(),
+                    metadata_mbuf.registration_unit(),
                     metadata_mbuf.offset() as _,
                     metadata_mbuf.data_len() as _,
                 );
@@ -4128,6 +4168,7 @@ impl Datapath for Mlx5Connection {
                                         dpseg,
                                         mbuf_metadata.data(),
                                         mbuf_metadata.mempool(),
+                                        mbuf_metadata.registration_unit(),
                                         mbuf_metadata.offset() as _,
                                         mbuf_metadata.data_len() as _,
                                     ),
@@ -4352,6 +4393,7 @@ impl Datapath for Mlx5Connection {
                                         dpseg,
                                         mbuf_metadata.data(),
                                         mbuf_metadata.mempool(),
+                                        mbuf_metadata.registration_unit(),
                                         mbuf_metadata.offset() as _,
                                         mbuf_metadata.data_len() as _,
                                     ),
@@ -4973,14 +5015,30 @@ impl Datapath for Mlx5Connection {
         self.allocator.recover_buffer_with_segment_info(buf)
     }
 
-    fn add_memory_pool(&mut self, size: usize, min_elts: usize) -> Result<Vec<MempoolID>> {
+    fn add_memory_pool(
+        &mut self,
+        size: usize,
+        min_elts: usize,
+        num_registration_units: usize,
+        register_at_start: bool,
+    ) -> Result<Vec<MempoolID>> {
         // use 2MB pages for data, 2MB pages for metadata (?)
         // println!("Inside add memory pool");
         let actual_size = cornflakes_libos::allocator::align_to_pow2(size);
-        let mempool_params = sizes::MempoolAllocationParams::new(min_elts, PGSIZE_2MB, actual_size)
-            .wrap_err("Incorrect mempool allocation params")?;
+        let mempool_params = sizes::MempoolAllocationParams::new(
+            min_elts,
+            PGSIZE_2MB,
+            actual_size,
+            num_registration_units,
+        )
+        .wrap_err("Incorrect mempool allocation params")?;
         tracing::info!(mempool_params = ?mempool_params, "Adding mempool");
-        let data_mempool = DataMempool::new(&mempool_params, &self.thread_context, true)?;
+        let data_mempool = DataMempool::new(
+            &mempool_params,
+            &self.thread_context,
+            true,
+            register_at_start,
+        )?;
         let id = self
             .allocator
             .add_mempool(mempool_params.get_item_len(), data_mempool)?;
@@ -4993,13 +5051,13 @@ impl Datapath for Mlx5Connection {
         return self.allocator.has_mempool(size);
     }
 
-    fn register_mempool(&mut self, id: MempoolID) -> Result<()> {
+    fn register_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
         self.allocator
-            .register(id, self.thread_context.get_context_ptr())
+            .register_segment(seg, self.thread_context.get_context_ptr())
     }
 
-    fn unregister_mempool(&mut self, id: MempoolID) -> Result<()> {
-        self.allocator.unregister(id)
+    fn unregister_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
+        self.allocator.unregister_segment(seg)
     }
 
     fn header_size(&self) -> usize {
