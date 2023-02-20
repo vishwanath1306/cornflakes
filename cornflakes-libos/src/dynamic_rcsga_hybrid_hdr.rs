@@ -1,12 +1,11 @@
 use super::{
-    datapath::{Datapath, MetadataOps, MetadataStatus, ReceivedPkt},
+    datapath::{Datapath, MetadataOps, ReceivedPkt},
     ArenaDatapathSga, CopyContext, CopyContextRef,
 };
 use bitmaps::Bitmap;
 use byteorder::{ByteOrder, LittleEndian};
 use color_eyre::eyre::{Result, WrapErr};
 use std::{default::Default, marker::PhantomData, ops::Index, slice::Iter, str};
-use zero_copy_cache::data_structures::Segment;
 
 #[inline]
 pub fn write_size_and_offset(write_offset: usize, size: usize, offset: usize, buffer: &mut [u8]) {
@@ -359,28 +358,9 @@ where
             let copy_context_ref = copy_context.copy(ptr, datapath)?;
             return Ok(CFBytes::Copied(copy_context_ref));
         }
-
-        match datapath.recover_metadata_with_status(ptr)? {
-            MetadataStatus::Pinned((x, y)) => {
-                let zcc = datapath.get_mut_zcc();
-                zcc.update_stats(&y);
-                println!(
-                    "Stats for pinned segment {:?} is: {:?}",
-                    y.get_segment_id(),
-                    zcc.get_segment_access_count(y)
-                );
-                Ok(CFBytes::RefCounted(x))
-            }
-            MetadataStatus::UnPinned((_x, y)) => {
-                let zcc = datapath.get_mut_zcc();
-                zcc.update_stats(&y);
-                println!(
-                    "Stats in unpinned is: {:?}",
-                    zcc.get_segment_access_count(y)
-                );
-                Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?))
-            }
-            MetadataStatus::Arbitrary => Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?)),
+        match datapath.recover_metadata_if_pinned_and_insert_into_zero_copy_cache(ptr)? {
+            Some(metadata) => Ok(CFBytes::RefCounted(metadata)),
+            None => Ok(CFBytes::Copied(copy_context.copy(ptr, datapath)?)),
         }
     }
 
@@ -646,8 +626,8 @@ where
             return Ok(CFString::Copied(copy_context_ref));
         }
 
-        match datapath.recover_metadata(ptr)? {
-            Some(m) => Ok(CFString::RefCounted(m)),
+        match datapath.recover_metadata_if_pinned_and_insert_into_zero_copy_cache(ptr)? {
+            Some(metadata) => Ok(CFString::RefCounted(metadata)),
             None => Ok(CFString::Copied(copy_context.copy(ptr, datapath)?)),
         }
     }

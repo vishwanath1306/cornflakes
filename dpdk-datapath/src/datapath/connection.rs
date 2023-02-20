@@ -3,9 +3,7 @@ use super::{
 };
 use cornflakes_libos::{
     allocator::{align_up, MemoryPoolAllocator, MempoolID},
-    datapath::{
-        CornflakesSegment, Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt,
-    },
+    datapath::{Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt},
     utils::AddressInfo,
     ConnID, MsgID, OrderedSga, RcSga, RcSge, Sga, Sge, USING_REF_COUNTING,
 };
@@ -1626,7 +1624,6 @@ impl Datapath for DpdkConnection {
         value_size: usize,
         min_elts: usize,
         _num_registration_units: usize,
-        _register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
         let mut ret: Vec<MempoolID> = Vec::default();
         //let num_values = (min_num_values as f64 * 1.20) as usize;
@@ -1688,14 +1685,6 @@ impl Datapath for DpdkConnection {
     #[inline]
     fn has_mempool(&self, size: usize) -> bool {
         self.allocator.has_mempool(size)
-    }
-
-    fn register_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
-        self.allocator.register_segment(seg, ())
-    }
-
-    fn unregister_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
-        self.allocator.unregister_segment(seg)
     }
 
     fn header_size(&self) -> usize {

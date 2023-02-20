@@ -121,21 +121,24 @@ pub extern "C" fn Mlx5Connection_set_inline_mode(
 }
 
 #[no_mangle]
+pub extern "C" fn Mlx5Connection_initialize_zero_copy_cache_thread(
+    conn: *mut ::std::os::raw::c_void,
+) {
+    let conn_box = unsafe { Box::from_raw(conn as *mut Mlx5Connection) };
+    conn_box.initialize_zero_copy_cache_thread();
+    Box::into_raw(conn_box);
+}
+
+#[no_mangle]
 pub extern "C" fn Mlx5Connection_add_memory_pool(
     conn: *mut ::std::os::raw::c_void,
     buf_size: usize,
     min_elts: usize,
     num_registration_units: usize,
-    register_at_start: bool,
 ) {
     let mut conn_box = unsafe { Box::from_raw(conn as *mut Mlx5Connection) };
     conn_box
-        .add_memory_pool(
-            buf_size,
-            min_elts,
-            num_registration_units,
-            register_at_start,
-        )
+        .add_memory_pool(buf_size, min_elts, num_registration_units)
         .unwrap();
     Box::into_raw(conn_box);
 }

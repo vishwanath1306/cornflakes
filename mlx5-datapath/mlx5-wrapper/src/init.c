@@ -187,6 +187,30 @@ int custom_mlx5_deregister_mempool_unit(struct custom_mlx5_mempool *mempool,
     return 0;
 }
 
+/* 
+ * Registers given memory address with the NIC.
+ * */
+int32_t custom_mlx5_register_region(struct custom_mlx5_global_context *context,
+        void *starting_address,
+        size_t len,
+        struct ibv_mr **mr,
+        int registration_flags) {
+    *mr = ibv_reg_mr(context->pd, starting_address, len, registration_flags);
+    if (*mr == NULL) {
+        NETPERF_ERROR("Failed to do memory reg for region %p len %lu: %s", starting_address, len, strerror(errno));
+        return -errno;
+    }
+    return (int32_t)((*mr)->lkey);
+}
+
+/*
+ * Unregisters given memory region with the NIC.
+ * */
+int custom_mlx5_deregister_region(struct ibv_mr *mr) {
+    int ret = ibv_dereg_mr(mr);
+    mr = NULL;
+    return ret;
+}
 int custom_mlx5_deregister_and_free_custom_mlx5_mempool(struct custom_mlx5_mempool *mempool) {
     for (size_t i = 0; i < mempool->nr_registrations; i++) {
         custom_mlx5_deregister_mempool_unit(mempool, i);

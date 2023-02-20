@@ -69,6 +69,10 @@ int custom_mlx5_is_registered(struct custom_mlx5_mempool *mempool, size_t regist
     }
 }
 
+int32_t custom_mlx5_mempool_get_lkey(struct custom_mlx5_mempool *mempool, size_t registration_unit) {
+    return mempool->registrations[registration_unit].lkey;
+}
+
 size_t custom_mlx5_mempool_find_registration_unit(struct custom_mlx5_mempool *mempool, void *page_address) {
     return (size_t)(((char *)page_address - (char *)mempool->buf) / mempool->registration_len);
 }

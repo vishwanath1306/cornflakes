@@ -1,14 +1,12 @@
 use super::{
     super::{access, mlx5_bindings::*},
-    connection::{MbufMetadata, Mlx5Buffer, Mlx5Connection, Mlx5PerThreadContext},
+    connection::{
+        CornflakesMlx5Slab, MbufMetadata, Mlx5Buffer, Mlx5Connection, Mlx5PerThreadContext,
+    },
     sizes,
 };
 use color_eyre::eyre::{bail, Result};
-use cornflakes_libos::{
-    allocator::{DatapathMemoryPool, MempoolID},
-    datapath::{CornflakesSegment, Datapath},
-    mem::closest_2mb_page,
-};
+use cornflakes_libos::{allocator::DatapathMemoryPool, datapath::Datapath, mem::closest_2mb_page};
 use std::boxed::Box;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -21,6 +19,7 @@ impl Drop for DataMempool {
         // (a) drop pages behind mempool itself
         // (b) drop box allocated for registered mempool pointer
         unsafe {
+            // TODO: might need to change drop to not try to unregister mempool
             if custom_mlx5_deregister_and_free_custom_mlx5_mempool(self.mempool()) != 0 {
                 tracing::warn!(
                     "Failed to deregister and free backing mempool at {:?}",
@@ -34,6 +33,27 @@ impl Drop for DataMempool {
 }
 
 impl DataMempool {
+    #[inline]
+    pub fn get_cornflakes_mlx5_slab(&self) -> Result<CornflakesMlx5Slab> {
+        let page_size = match unsafe { access!(self.mempool(), pgsize, usize) } {
+            zero_copy_cache::pagesizes::PGSIZE_4KB => zero_copy_cache::pagesizes::PageSize::PG4KB,
+            zero_copy_cache::pagesizes::PGSIZE_2MB => zero_copy_cache::pagesizes::PageSize::PG2MB,
+            zero_copy_cache::pagesizes::PGSIZE_1GB => zero_copy_cache::pagesizes::PageSize::PG1GB,
+            _ => {
+                bail!("Unacceptable pagesize: {}", unsafe {
+                    access!(self.mempool(), pgsize, usize)
+                });
+            }
+        };
+
+        Ok(CornflakesMlx5Slab::new(
+            0,
+            page_size,
+            unsafe { access!(self.mempool(), buf, *mut ::std::os::raw::c_void) },
+            unsafe { access!(self.mempool(), num_pages, usize) },
+        ))
+    }
+
     #[inline]
     fn mempool(&self) -> *mut custom_mlx5_mempool {
         self.mempool_ptr as *mut custom_mlx5_mempool
@@ -95,27 +115,16 @@ impl DataMempool {
     pub unsafe fn recover_metadata_mbuf(
         &self,
         ptr: *const u8,
-    ) -> (*mut ::std::os::raw::c_void, u64, usize, usize) {
+    ) -> (*mut ::std::os::raw::c_void, usize, usize) {
         let data_pool = self.mempool();
         let mempool_start = access!(data_pool, buf, usize);
         let item_len = access!(data_pool, item_len, usize);
-        let registration_unit = unsafe {
-            custom_mlx5_mempool_find_registration_unit(
-                data_pool,
-                closest_2mb_page(ptr as *const u8) as *mut ::std::os::raw::c_void,
-            )
-        };
         let offset_within_alloc = ptr as usize - mempool_start;
         let index =
             (offset_within_alloc & !(item_len - 1)) >> access!(data_pool, log_item_len, usize);
         let data_ptr = (mempool_start + (index << access!(data_pool, log_item_len, usize)))
             as *mut std::os::raw::c_void;
-        (
-            data_ptr,
-            registration_unit as _,
-            index,
-            ptr as usize - data_ptr as usize,
-        )
+        (data_ptr, index, ptr as usize - data_ptr as usize)
     }
 }
 
@@ -123,17 +132,6 @@ impl DatapathMemoryPool for DataMempool {
     type DatapathImpl = Mlx5Connection;
 
     type RegistrationContext = *mut custom_mlx5_per_thread_context;
-
-    fn get_segment_info(&self, mempool_id: MempoolID, page: usize) -> CornflakesSegment {
-        let mempool = self.mempool();
-        let registration_unit = unsafe {
-            custom_mlx5_mempool_find_registration_unit(mempool, page as *mut ::std::os::raw::c_void)
-                as usize
-        };
-        CornflakesSegment::new(mempool_id, registration_unit, unsafe {
-            access!(mempool, pgsize, usize)
-        })
-    }
 
     #[inline]
     fn get_2mb_pages(&self) -> Vec<usize> {
@@ -179,51 +177,6 @@ impl DatapathMemoryPool for DataMempool {
     }
 
     #[inline]
-    fn register_segment(
-        &mut self,
-        cornflakes_segment: &CornflakesSegment,
-        registration_context: Self::RegistrationContext,
-    ) -> Result<()> {
-        unsafe {
-            if custom_mlx5_register_mempool_unit(
-                access!(
-                    registration_context,
-                    global_context,
-                    *mut custom_mlx5_global_context
-                ),
-                self.mempool(),
-                cornflakes_segment.get_registration_unit() as _,
-                ibv_access_flags_IBV_ACCESS_LOCAL_WRITE as _,
-            ) != 0
-            {
-                bail!("Failed to register mempool");
-            }
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn unregister_segment(&mut self, segment: &CornflakesSegment) -> Result<()> {
-        unsafe {
-            if custom_mlx5_deregister_mempool_unit(
-                self.mempool(),
-                segment.get_registration_unit() as _,
-            ) != 0
-            {
-                bail!("Failed to deregister memory pool");
-            }
-        }
-        Ok(())
-    }
-
-    #[inline]
-    fn is_registered(&self, segment: &CornflakesSegment) -> bool {
-        unsafe {
-            custom_mlx5_is_registered(self.mempool(), segment.get_registration_unit() as _) == 1
-        }
-    }
-
-    #[inline]
     fn get_pagesize(&self) -> usize {
         unsafe { access!(self.mempool(), pgsize, usize) }
     }
@@ -248,14 +201,12 @@ impl DatapathMemoryPool for DataMempool {
         &self,
         buf: &[u8],
     ) -> Result<<<Self as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathMetadata> {
-        let (data_ptr, registration_unit, index, offset) =
-            unsafe { self.recover_metadata_mbuf(buf.as_ptr()) };
-
+        let (data_ptr, index, offset) = unsafe { self.recover_metadata_mbuf(buf.as_ptr()) };
         {
             Ok(MbufMetadata::new(
                 data_ptr,
                 self.mempool(),
-                registration_unit,
+                0,
                 index,
                 offset,
                 buf.len(),
@@ -278,6 +229,12 @@ impl DatapathMemoryPool for DataMempool {
                 closest_2mb_page(data as *const u8) as *mut ::std::os::raw::c_void,
             )
         };
+        let lkey = match unsafe { custom_mlx5_mempool_get_lkey(self.mempool(), registration_unit) }
+        {
+            -1 => None,
+            x => Some(x as u32),
+        };
+
         // recover the ref count index
         let index = unsafe { custom_mlx5_mempool_find_index(self.mempool(), data) };
         if index == -1 {
@@ -289,7 +246,7 @@ impl DatapathMemoryPool for DataMempool {
         Ok(Some(Mlx5Buffer::new(
             data,
             self.mempool(),
-            registration_unit,
+            lkey,
             index as usize,
             0,
         )))

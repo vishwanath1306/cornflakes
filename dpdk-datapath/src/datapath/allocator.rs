@@ -3,11 +3,7 @@ use super::{
     connection::{DpdkBuffer, DpdkConnection, RteMbufMetadata},
 };
 use color_eyre::eyre::{bail, ensure, Result, WrapErr};
-use cornflakes_libos::{
-    allocator::{DatapathMemoryPool, MempoolID},
-    datapath::{CornflakesSegment, Datapath},
-    mem::{closest_2mb_page, PGSIZE_2MB},
-};
+use cornflakes_libos::{allocator::DatapathMemoryPool, datapath::Datapath, mem::closest_2mb_page};
 
 /// Determine three parameters about the memory in the DPDK mempool:
 /// 1. (Start address, length)
@@ -232,29 +228,6 @@ impl DatapathMemoryPool for MempoolInfo {
     fn get_1g_pages(&self) -> Vec<usize> {
         // TODO: implement
         vec![]
-    }
-
-    fn get_segment_info(&self, mempool_id: MempoolID, _page: usize) -> CornflakesSegment {
-        CornflakesSegment::new(mempool_id, 0, PGSIZE_2MB)
-    }
-
-    fn register_segment(
-        &mut self,
-        _segment: &CornflakesSegment,
-        _registration_context: Self::RegistrationContext,
-    ) -> Result<()> {
-        tracing::info!("On demand registration not supported for dpdk datapath");
-        Ok(())
-    }
-
-    /// Unregister the backing region behind this memory pool
-    fn unregister_segment(&mut self, _segment: &CornflakesSegment) -> Result<()> {
-        bail!("Cannot unregister segments from DPDK memory pool");
-    }
-
-    /// Whether the entire backing region of the memory pool is registered
-    fn is_registered(&self, _segment: &CornflakesSegment) -> bool {
-        true
     }
 
     fn get_pagesize(&self) -> usize {

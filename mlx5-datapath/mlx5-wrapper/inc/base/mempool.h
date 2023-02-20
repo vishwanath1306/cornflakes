@@ -51,6 +51,10 @@ static inline void __custom_mlx5_mempool_free_debug_check(struct custom_mlx5_mem
 int custom_mlx5_is_registered(struct custom_mlx5_mempool *mempool, size_t registration_unit);
 
 /**
+ * custom_mlx5_mempool_get_lkey - Gets the lkey for a given registration unit
+ */
+int32_t custom_mlx5_mempool_get_lkey(struct custom_mlx5_mempool *mempool, size_t registration_unit);
+/**
  * custom_mlx5_mempool_find_registration_unit - Finds the registration unit
  * corresponding to a page start address.
  */

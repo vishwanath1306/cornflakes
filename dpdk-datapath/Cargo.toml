@@ -27,6 +27,8 @@ hdrhistogram = "7.2.0"
 ctrlc = "3.1.7"
 structopt="0.2.16"
 structopt-derive="0.2.16"
+#zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "9b80b69ce8712db099a1b4e98bf35db5d7ca4bcd" }
+zero_copy_cache = {path = "/data/users/deeptir/zero_copy_cache" }
 
 [features]
 default = []
