@@ -24,7 +24,7 @@
 #include <util/mmio.h>
 #include <util/udma_barrier.h>
 
-void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v) {
+void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v, rust_callback completion_callback, void *zcc) {
     struct custom_mlx5_transmission_info *transmission = custom_mlx5_get_completion_segment(v, wqe_idx);
     struct custom_mlx5_transmission_info *curr = transmission;
     NETPERF_DEBUG("Transmission %p, num_wqes: %u, num_mbufs: %u", transmission, transmission->info.metadata.num_wqes, transmission->info.metadata.num_mbufs);
@@ -43,7 +43,9 @@ void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v)
 }
 
 int custom_mlx5_process_completions(struct custom_mlx5_per_thread_context *per_thread_context,
-                                unsigned int budget) {
+                                unsigned int budget,
+                                rust_callback completion_callback,
+                                void *zcc) {
     struct custom_mlx5_txq *v = &per_thread_context->txq;
 
     if (custom_mlx5_nr_inflight_tx(v) < (SQ_CLEAN_THRESH)) {
@@ -77,7 +79,7 @@ int custom_mlx5_process_completions(struct custom_mlx5_per_thread_context *per_t
         wqe_idx = be16toh(cqe->wqe_counter) & (v->tx_qp_dv.sq.wqe_cnt - 1);
         NETPERF_DEBUG("Got completion on wqe idx: %u; unwrapped cqe wqe idx: %u, wqe ct: %u, cqe cnt: %u", wqe_idx, be16toh(cqe->wqe_counter), v->tx_qp_dv.sq.wqe_cnt, cq->cqe_cnt);
         // process completion information for this transmission
-        custom_mlx5_process_completion(wqe_idx, v);
+        custom_mlx5_process_completion(wqe_idx, v, completion_callback, zcc);
     }
 
     cq->dbrec[0] = htobe32(v->cq_head & 0xffffff);
@@ -425,14 +427,14 @@ struct mlx5_wqe_data_seg *custom_mlx5_add_dpseg(struct custom_mlx5_per_thread_co
                 struct mlx5_wqe_data_seg *dpseg,
                 void *data,
                 struct custom_mlx5_mempool *mempool,
-                size_t registration_unit,
+                uint32_t lkey,
                 size_t data_off,
                 size_t data_len) {
-    NETPERF_DEBUG("Dpseg being filled in: %p, data_len: %lu, addr: %p, lkey: %u", dpseg, data_len, data, mempool->registrations[registration_unit].lkey);
+    NETPERF_DEBUG("Dpseg being filled in: %p, data_len: %lu, addr: %p, lkey: %u", dpseg, data_len, data, lkey);
     struct custom_mlx5_txq *v = &per_thread_context->txq;
     dpseg->byte_count = htobe32(data_len);
     dpseg->addr = htobe64((uint64_t)((char *)data + data_off));
-    dpseg->lkey = htobe32(mempool->registrations[registration_unit].lkey);
+    dpseg->lkey = htobe32(lkey);
     return custom_mlx5_incr_dpseg(v, dpseg);
 }
 

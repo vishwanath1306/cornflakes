@@ -1,7 +1,6 @@
 use super::{datapath::Datapath, mem};
-use crate::datapath::{CornflakesSegment, MetadataStatus};
 use ahash::AHashMap;
-use color_eyre::eyre::{bail, Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr};
 #[cfg(feature = "profiler")]
 use demikernel;
 use hashbrown::HashMap;
@@ -41,28 +40,12 @@ pub trait DatapathMemoryPool {
     type DatapathImpl: Datapath;
     type RegistrationContext;
 
-    /// Returns CornflakesSegment associated with particular page.
-    fn get_segment_info(&self, mempool_id: MempoolID, page: usize) -> CornflakesSegment;
-
     /// Gets an iterator over 2MB pages in this mempool.
     fn get_2mb_pages(&self) -> Vec<usize>;
 
     fn get_4k_pages(&self) -> Vec<usize>;
 
     fn get_1g_pages(&self) -> Vec<usize>;
-
-    /// Register the backing region behind this memory pool
-    fn register_segment(
-        &mut self,
-        segment: &CornflakesSegment,
-        registration_context: Self::RegistrationContext,
-    ) -> Result<()>;
-
-    /// Unregister the backing region behind this memory pool
-    fn unregister_segment(&mut self, segment: &CornflakesSegment) -> Result<()>;
-
-    /// Whether the entire backing region of the memory pool is registered
-    fn is_registered(&self, segment: &CornflakesSegment) -> bool;
 
     /// Get backing pagesize.
     fn get_pagesize(&self) -> usize;
@@ -82,7 +65,6 @@ pub trait DatapathMemoryPool {
     ) -> Result<<<Self as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathMetadata>;
 
     /// Allocate datapath buffer
-    /// Given context to refer back to memory pool.
     fn alloc_data_buf(
         &self,
     ) -> Result<Option<<<Self as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathBuffer>>;
@@ -111,13 +93,13 @@ where
     tx_mempool: M,
 
     /// Cache from allocated addresses -> corresponding metadata for 2mb pages.
-    address_cache_2mb: AHashMap<usize, CornflakesSegment>,
+    address_cache_2mb: AHashMap<usize, MempoolID>,
 
     /// Cache from allocated address -> corresponding mempool ID for 4k pages.
-    address_cache_4k: AHashMap<usize, CornflakesSegment>,
+    address_cache_4k: AHashMap<usize, MempoolID>,
 
     /// Cache from allocated address -> corresponding mempool ID for 1G pages.
-    address_cache_1g: AHashMap<usize, CornflakesSegment>,
+    address_cache_1g: AHashMap<usize, MempoolID>,
 }
 
 impl<M> MemoryPoolAllocator<M>
@@ -131,13 +113,13 @@ where
 
         // add recv mempool to address cache
         for page in rx_mempool.get_2mb_pages().iter() {
-            address_cache_2mb.insert(*page, rx_mempool.get_segment_info(0, *page));
+            address_cache_2mb.insert(*page, 0);
         }
         for page in rx_mempool.get_4k_pages().iter() {
-            address_cache_4k.insert(*page, rx_mempool.get_segment_info(0, *page));
+            address_cache_4k.insert(*page, 0);
         }
         for page in rx_mempool.get_1g_pages().iter() {
-            address_cache_1g.insert(*page, rx_mempool.get_segment_info(0, *page));
+            address_cache_1g.insert(*page, 0);
         }
 
         let mut mempools = HashMap::default();
@@ -156,7 +138,15 @@ where
     }
 
     #[inline]
-    fn find_cornflakes_segment(&self, buf: &[u8]) -> Option<CornflakesSegment> {
+    pub fn is_registered(&self, seg: &[u8]) -> bool {
+        if let Some(_) = self.find_mempool_id(seg) {
+            return true;
+        }
+        return false;
+    }
+
+    #[inline]
+    fn find_mempool_id(&self, buf: &[u8]) -> Option<MempoolID> {
         match self
             .address_cache_2mb
             .get(&mem::closest_2mb_page(buf.as_ptr()))
@@ -192,22 +182,14 @@ where
         tracing::debug!("Adding mempool");
         // add the mempool into the address cache
         for page in handle.get_2mb_pages().into_iter() {
-            self.address_cache_2mb.insert(
-                page,
-                handle.get_segment_info(self.next_id_to_allocate, page),
-            );
+            self.address_cache_2mb
+                .insert(page, self.next_id_to_allocate);
         }
         for page in handle.get_4k_pages().into_iter() {
-            self.address_cache_4k.insert(
-                page,
-                handle.get_segment_info(self.next_id_to_allocate, page),
-            );
+            self.address_cache_4k.insert(page, self.next_id_to_allocate);
         }
         for page in handle.get_1g_pages().into_iter() {
-            self.address_cache_1g.insert(
-                page,
-                handle.get_segment_info(self.next_id_to_allocate, page),
-            );
+            self.address_cache_1g.insert(page, self.next_id_to_allocate);
         }
 
         let aligned_size = align_to_pow2(size);
@@ -227,46 +209,6 @@ where
             }
         }
         Ok(self.next_id_to_allocate - 1)
-    }
-
-    /// Registers the given segment.
-    /// If already registered, does nothing.
-    #[inline]
-    pub fn register_segment(
-        &mut self,
-        segment: &CornflakesSegment,
-        context: M::RegistrationContext,
-    ) -> Result<()> {
-        match self.mempools.get_mut(&segment.get_mempool_id()) {
-            Some(handle) => {
-                handle.register_segment(segment, context)?;
-            }
-            None => {
-                bail!(
-                    "Mempool allocator does not contain mempool ID {:?}",
-                    segment.get_mempool_id(),
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Unregisters the given segment.
-    /// If already unregistered, does nothing.
-    #[inline]
-    pub fn unregister_segment(&mut self, segment: &CornflakesSegment) -> Result<()> {
-        match self.mempools.get_mut(&segment.get_mempool_id()) {
-            Some(handle) => {
-                handle.unregister_segment(segment)?;
-            }
-            None => {
-                bail!(
-                    "Mempool allocator does not contain mempool ID {:?}",
-                    segment.get_mempool_id(),
-                );
-            }
-        }
-        Ok(())
     }
 
     #[inline]
@@ -308,19 +250,18 @@ where
         }
     }
 
-    /// Returns metadata associated with this buffer, if it exists, and the buffer is
-    /// registered. Only looks at mempools with aligned size and receive mempools.
+    /// Recovers metadata from this mempool ID.
     #[inline]
-    pub fn recover_buffer(
+    pub fn recover_from_mempool(
         &self,
-        buffer: &[u8],
+        mempool_id: MempoolID,
+        buf: &[u8],
     ) -> Result<Option<<<M as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathMetadata>>
     {
-        match self.find_cornflakes_segment(buffer) {
-            Some(segment) => {
-                let mempool = self.mempools.get(&segment.get_mempool_id()).unwrap();
-                let metadata = mempool
-                    .recover_buffer(buffer)
+        match self.mempools.get(&mempool_id) {
+            Some(m) => {
+                let metadata = m
+                    .recover_buffer(buf)
                     .wrap_err("unable to recover metadata")?;
                 return Ok(Some(metadata));
             }
@@ -333,42 +274,21 @@ where
     /// Returns metadata associated with this buffer, if it exists, and the buffer is
     /// registered. Only looks at mempools with aligned size and receive mempools.
     #[inline]
-    pub fn recover_buffer_with_segment_info(
+    pub fn recover_buffer(
         &self,
         buffer: &[u8],
-    ) -> Result<MetadataStatus<<M as DatapathMemoryPool>::DatapathImpl>> {
-        match self.find_cornflakes_segment(buffer) {
-            Some(segment) => {
-                let mempool = self.mempools.get(&segment.get_mempool_id()).unwrap();
+    ) -> Result<Option<<<M as DatapathMemoryPool>::DatapathImpl as Datapath>::DatapathMetadata>>
+    {
+        match self.find_mempool_id(buffer) {
+            Some(mempool_id) => {
+                let mempool = self.mempools.get(&mempool_id).unwrap();
                 let metadata = mempool
                     .recover_buffer(buffer)
                     .wrap_err("unable to recover metadata")?;
-                if mempool.is_registered(&segment) {
-                    // TODO: inefficient to return new CornflakesSegment.
-                    // Perhaps this can eventually return &CornflakesSegment?
-                    return Ok(MetadataStatus::Pinned((metadata, segment.clone())));
-                } else {
-                    return Ok(MetadataStatus::Pinned((metadata, segment.clone())));
-                }
+                return Ok(Some(metadata));
             }
             None => {
-                return Ok(MetadataStatus::Arbitrary);
-            }
-        }
-    }
-
-    /// Checks whether a given datapath buffer is in registered memory or not.
-    /// Checks only receive mempools and mempools with aligned to power of 2 size.
-    #[inline]
-    pub fn is_registered(&self, buf: &[u8]) -> bool {
-        // search through recv mempools first
-        match self.find_cornflakes_segment(buf) {
-            Some(seg) => {
-                let mempool = self.mempools.get(&seg.get_mempool_id()).unwrap();
-                mempool.is_registered(&seg)
-            }
-            None => {
-                return false;
+                return Ok(None);
             }
         }
     }

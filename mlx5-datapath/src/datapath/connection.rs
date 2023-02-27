@@ -5,9 +5,7 @@ use super::{
 };
 use cornflakes_libos::{
     allocator::{MemoryPoolAllocator, MempoolID},
-    datapath::{
-        CornflakesSegment, Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt,
-    },
+    datapath::{Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt},
     dynamic_rcsga_hybrid_hdr::HybridArenaRcSgaHdr,
     dynamic_sga_hdr::SgaHeaderRepr,
     mem::PGSIZE_2MB,
@@ -33,7 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 use yaml_rust::{Yaml, YamlLoader};
-use zero_copy_cache::data_structures::ZeroCopyCache;
+use zero_copy_cache::data_structures::{DatapathSlab, ZeroCopyCache};
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 128;
 const COMPLETION_BUDGET: usize = 32;
@@ -42,14 +40,165 @@ const MAX_BUFFER_SIZE: usize = 16384;
 const MEMPOOL_MIN_ELTS: usize = 8192;
 const TX_POOL_NUM_REGISTRATIONS: usize = 1;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CornflakesMlx5Slab {
+    mempool_id: MempoolID,
+    page_size: zero_copy_cache::pagesizes::PageSize,
+    starting_address: *mut ::std::os::raw::c_void,
+    num_pages: usize,
+}
+
+impl CornflakesMlx5Slab {
+    pub fn new(
+        mempool_id: MempoolID,
+        page_size: zero_copy_cache::pagesizes::PageSize,
+        starting_address: *mut ::std::os::raw::c_void,
+        num_pages: usize,
+    ) -> Self {
+        CornflakesMlx5Slab {
+            mempool_id,
+            page_size,
+            starting_address,
+            num_pages,
+        }
+    }
+
+    pub fn set_id(&mut self, mempool_id: MempoolID) {
+        self.mempool_id = mempool_id;
+    }
+}
+
+#[derive(Debug)]
+pub struct PinningInfo {
+    ibv_mr: *mut ibv_mr,
+    lkey: i32,
+}
+
+unsafe impl Send for PinningInfo {}
+unsafe impl Sync for PinningInfo {}
+
+impl PinningInfo {
+    fn is_pinned(&self) -> bool {
+        self.lkey != -1
+    }
+
+    fn get_lkey(&self) -> i32 {
+        self.lkey
+    }
+
+    fn set_lkey(&mut self, lkey: i32) {
+        self.lkey = lkey;
+    }
+
+    fn get_mut_ibv_mr(&mut self) -> *mut *mut ibv_mr {
+        &mut self.ibv_mr as _
+    }
+
+    fn get_ibv_mr(&self) -> *mut ibv_mr {
+        self.ibv_mr
+    }
+
+    fn set_unpinned(&mut self) {
+        self.ibv_mr = std::ptr::null_mut();
+        self.lkey = -1;
+    }
+}
+
+impl DatapathSlab for CornflakesMlx5Slab {
+    type SlabId = MempoolID;
+    type IOInfo = i32;
+    type PinningState = PinningInfo;
+    type PrivateInfo = Arc<Mlx5GlobalContext>;
+
+    fn default_pinning_state(&self) -> Self::PinningState {
+        PinningInfo {
+            ibv_mr: std::ptr::null_mut(),
+            lkey: -1,
+        }
+    }
+
+    fn get_slab_id(&self) -> Self::SlabId {
+        self.mempool_id
+    }
+
+    fn is_pinned(pinning_state: &Self::PinningState) -> bool {
+        pinning_state.is_pinned()
+    }
+
+    fn pin_segment(
+        pinning_state: &mut Self::PinningState,
+        private_info: &Self::PrivateInfo,
+        start_address: *mut ::std::os::raw::c_void,
+        len: usize,
+    ) {
+        if !pinning_state.is_pinned() {
+            let global_context = private_info.global_context_ptr;
+            let lkey = unsafe {
+                custom_mlx5_register_region(
+                    global_context as _,
+                    start_address as _,
+                    len as _,
+                    pinning_state.get_mut_ibv_mr(),
+                    ibv_access_flags_IBV_ACCESS_LOCAL_WRITE as _,
+                )
+            };
+            pinning_state.set_lkey(lkey);
+            tracing::debug!(
+                "Pinned segment [{:?}, {:?} + {}]to have lkey {}",
+                start_address,
+                start_address,
+                len,
+                lkey
+            );
+        }
+    }
+
+    fn unpin_segment(pinning_state: &mut Self::PinningState) {
+        if pinning_state.is_pinned() {
+            unsafe {
+                custom_mlx5_deregister_region(pinning_state.get_ibv_mr());
+            }
+        }
+        pinning_state.set_unpinned();
+    }
+
+    fn get_io_info(pinning_state: &Self::PinningState) -> Self::IOInfo {
+        pinning_state.get_lkey()
+    }
+
+    fn get_total_num_pages(&self) -> usize {
+        self.num_pages
+    }
+
+    fn get_start_address(&self) -> *mut ::std::os::raw::c_void {
+        self.starting_address
+    }
+
+    fn get_page_size(&self) -> zero_copy_cache::pagesizes::PageSize {
+        self.page_size.clone()
+    }
+}
+
+unsafe extern "C" fn io_completion_callback(
+    zcc_ptr: *mut ::std::os::raw::c_void,
+    addr: *mut ::std::os::raw::c_void,
+    len: u64,
+) {
+    let zero_copy_cache = zcc_ptr as *mut ZeroCopyCache<CornflakesMlx5Slab>;
+    let buf = std::slice::from_raw_parts(addr as *const u8, len as _);
+    (*zero_copy_cache).record_io_completion(buf);
+}
+
 #[derive(PartialEq, Eq)]
 pub struct Mlx5Buffer {
     /// Underlying data pointer
     data: *mut ::std::os::raw::c_void,
     /// Pointer back to the data and metadata pool pair
     mempool: *mut custom_mlx5_mempool,
-    /// Registration unit associated with this buffer.
-    registration_unit: u64,
+    /// Optional lkey. For allocations backed by segments managed by zero copy cache,
+    /// buffer lkey might be stale; for temporary buffers and receive buffers, lkey will never
+    /// become stale.
+    lkey: Option<u32>,
     /// Refcnt index
     refcnt_index: usize,
     /// Data len,
@@ -72,7 +221,7 @@ impl Clone for Mlx5Buffer {
             data: self.data,
             mempool: self.mempool,
             refcnt_index: self.refcnt_index,
-            registration_unit: self.registration_unit,
+            lkey: self.lkey,
             data_len: self.data_len,
         }
     }
@@ -84,7 +233,7 @@ impl Default for Mlx5Buffer {
             data: std::ptr::null_mut(),
             mempool: std::ptr::null_mut(),
             refcnt_index: 0,
-            registration_unit: 0,
+            lkey: None,
             data_len: 0,
         }
     }
@@ -111,7 +260,7 @@ impl Mlx5Buffer {
     pub fn new(
         data: *mut ::std::os::raw::c_void,
         mempool: *mut custom_mlx5_mempool,
-        registration_unit: u64,
+        lkey: Option<u32>,
         refcnt_index: usize,
         data_len: usize,
     ) -> Self {
@@ -121,7 +270,7 @@ impl Mlx5Buffer {
         Mlx5Buffer {
             data,
             mempool,
-            registration_unit,
+            lkey,
             refcnt_index,
             data_len,
         }
@@ -143,14 +292,14 @@ impl Mlx5Buffer {
     ) -> (
         *mut ::std::os::raw::c_void,
         *mut custom_mlx5_mempool,
-        u64,
+        Option<u32>,
         usize,
         usize,
     ) {
         (
             self.data,
             self.mempool,
-            self.registration_unit,
+            self.lkey,
             self.refcnt_index,
             self.data_len,
         )
@@ -233,8 +382,9 @@ pub struct MbufMetadata {
     pub data: *mut ::std::os::raw::c_void,
     /// Pointer to registered mempool.
     pub mempool: *mut custom_mlx5_mempool,
-    /// Registration unit associated with mbuf.
-    pub registration_unit: u64,
+    /// Lkey associated with mbuf. As mbuf metadata's are constructed on the fly, this will always
+    /// be up to date.
+    pub lkey: u32,
     /// Reference count index.
     pub refcnt_index: usize,
     /// Application data offset
@@ -247,7 +397,7 @@ impl MbufMetadata {
     pub fn new(
         data: *mut ::std::os::raw::c_void,
         mempool: *mut custom_mlx5_mempool,
-        registration_unit: u64,
+        lkey: u32,
         refcnt_index: usize,
         offset: usize,
         len: usize,
@@ -260,24 +410,30 @@ impl MbufMetadata {
         MbufMetadata {
             data,
             mempool,
-            registration_unit,
+            lkey,
             refcnt_index,
             offset,
             len,
         }
     }
-    pub fn from_buf(mut mlx5_buffer: Mlx5Buffer) -> Self {
+    pub fn from_buf(mut mlx5_buffer: Mlx5Buffer) -> Result<Self> {
         mlx5_buffer.update_refcnt(1);
-        let (buf, custom_mlx5_mempool, registration_unit, refcnt_index, data_len) =
-            mlx5_buffer.get_inner();
-        MbufMetadata {
+        let (buf, custom_mlx5_mempool, lkey, refcnt_index, data_len) = mlx5_buffer.get_inner();
+        Ok(MbufMetadata {
             data: buf,
             mempool: custom_mlx5_mempool,
-            registration_unit,
+            lkey: {
+                match lkey {
+                    Some(x) => x,
+                    None => {
+                        bail!("Turning buffer into metadata requires non-null refcnt");
+                    }
+                }
+            },
             refcnt_index,
             offset: 0,
             len: data_len,
-        }
+        })
     }
 
     pub fn increment_refcnt(&mut self) {
@@ -290,12 +446,16 @@ impl MbufMetadata {
         self.mempool
     }
 
-    pub fn registration_unit(&self) -> u64 {
-        self.registration_unit
-    }
-
     pub fn data(&self) -> *mut ::std::os::raw::c_void {
         self.data
+    }
+
+    pub fn lkey(&self) -> u32 {
+        self.lkey
+    }
+
+    pub fn set_lkey(&mut self, lkey: u32) {
+        self.lkey = lkey;
     }
 }
 
@@ -327,7 +487,7 @@ impl Default for MbufMetadata {
         MbufMetadata {
             data: ptr::null_mut(),
             mempool: ptr::null_mut(),
-            registration_unit: 0,
+            lkey: 0,
             refcnt_index: 0,
             offset: 0,
             len: 0,
@@ -356,7 +516,7 @@ impl Clone for MbufMetadata {
         MbufMetadata::new(
             self.data,
             self.mempool,
-            self.registration_unit,
+            self.lkey,
             self.refcnt_index,
             self.offset,
             self.len,
@@ -368,8 +528,8 @@ impl std::fmt::Debug for MbufMetadata {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
-            "Data addr: {:?}, mempool: {:?}, registration_unit: {}, refcnt_index: {}, off: {}, len: {}",
-            self.data, self.mempool, self.registration_unit, self.refcnt_index, self.offset, self.len
+            "Data addr: {:?}, mempool: {:?}, lkey: {:?}, refcnt_index: {}, off: {}, len: {}",
+            self.data, self.mempool, self.lkey, self.refcnt_index, self.offset, self.len
         )
     }
 }
@@ -386,7 +546,7 @@ impl AsRef<[u8]> for MbufMetadata {
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-struct Mlx5GlobalContext {
+pub struct Mlx5GlobalContext {
     global_context_ptr: *mut [u8],
     thread_context_ptr: *mut [u8],
 }
@@ -426,6 +586,9 @@ unsafe impl Send for Mlx5PerThreadContext {}
 unsafe impl Sync for Mlx5PerThreadContext {}
 
 impl Mlx5PerThreadContext {
+    pub fn get_global_context_rc(&self) -> Arc<Mlx5GlobalContext> {
+        self.global_context_rc.clone()
+    }
     pub fn get_context_ptr(&self) -> *mut custom_mlx5_per_thread_context {
         self.context
     }
@@ -565,7 +728,7 @@ impl Drop for RecvMbufArray {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Mlx5Connection {
     /// Per thread context.
     thread_context: Mlx5PerThreadContext,
@@ -599,8 +762,8 @@ pub struct Mlx5Connection {
     mbuf_metadatas: [Option<MbufMetadata>; 32],
     /// header buffer to use while posting entries
     header_buffer: Vec<u8>,
-    /// Zero copy cache object
-    zero_copy_cache: ZeroCopyCache<CornflakesSegment>,
+    /// Zero copy cache
+    zero_copy_cache: ZeroCopyCache<CornflakesMlx5Slab>,
 }
 
 impl Mlx5Connection {
@@ -965,12 +1128,16 @@ impl Mlx5Connection {
         }
     }
 
-    fn poll_for_completions(&self) -> Result<()> {
+    fn poll_for_completions(&mut self) -> Result<()> {
         // check for completions: ONLY WHEN IN FLIGHT > THRESH
+        // TODO: modify poll for completions to collect addresses that were completed
         if unsafe {
             custom_mlx5_process_completions(
                 self.thread_context.get_context_ptr(),
                 COMPLETION_BUDGET as _,
+                Some(io_completion_callback),
+                &mut self.zero_copy_cache as *mut ZeroCopyCache<CornflakesMlx5Slab>
+                    as *mut ::std::os::raw::c_void,
             )
         } != 0
         {
@@ -1022,7 +1189,7 @@ impl Mlx5Connection {
                     curr_dpseg,
                     metadata_mbuf.data(),
                     metadata_mbuf.mempool(),
-                    metadata_mbuf.registration_unit(),
+                    metadata_mbuf.lkey(),
                     metadata_mbuf.offset() as _,
                     metadata_mbuf.data_len() as _,
                 ),
@@ -1119,7 +1286,7 @@ impl Mlx5Connection {
                     offset += seg.len();
                 }
 
-                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
 
                 let (curr_dpseg, curr_completion) =
                     self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
@@ -1259,7 +1426,7 @@ impl Mlx5Connection {
                     // copy in the header into a buffer
                     self.copy_hdr(&mut data_buffer, conn_id, msg_id, data_len)?;
                     // attach this data buffer to a metadata buffer
-                    let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                    let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                     let (curr_dpseg, completion) =
                         self.post_mbuf_metadata(&mut metadata_mbuf, curr_data_seg, curr_completion);
                     curr_data_seg = curr_dpseg;
@@ -1315,7 +1482,7 @@ impl Mlx5Connection {
                 }
 
                 // attach this data buffer to a metadata buffer
-                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                 let (curr_dpseg, completion) =
                     self.post_mbuf_metadata(&mut metadata_mbuf, curr_data_seg, curr_completion);
                 curr_data_seg = curr_dpseg;
@@ -1708,7 +1875,7 @@ impl Mlx5Connection {
                     // copy in the header into a buffer
                     self.copy_hdr(&mut data_buffer, conn_id, msg_id, data_len)?;
                     // attach this data buffer to a metadata buffer
-                    let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                    let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                     let (dpseg, completion) =
                         self.post_mbuf_metadata(&mut metadata_mbuf, curr_data_seg, curr_completion);
                     curr_data_seg = dpseg;
@@ -1779,7 +1946,7 @@ impl Mlx5Connection {
                 }
 
                 // attach this data buffer to a metadata buffer
-                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                 let (dpseg, completion) =
                     self.post_mbuf_metadata(&mut metadata_mbuf, curr_data_seg, curr_completion);
                 curr_data_seg = dpseg;
@@ -2122,11 +2289,11 @@ impl Datapath for Mlx5Connection {
 
         Ok(Mlx5Connection {
             thread_context: context,
-            mode: mode,
+            mode,
             outgoing_window: HashMap::default(),
             active_connections: [None; MAX_CONCURRENT_CONNECTIONS],
             address_to_conn_id: HashMap::default(),
-            allocator: allocator,
+            allocator,
             copying_threshold: 256,
             max_segments: 32,
             inline_mode: InlineMode::default(),
@@ -2317,7 +2484,7 @@ impl Datapath for Mlx5Connection {
 
                     // now put this inside an mbuf and post it.
                     // attach this data buffer to a metadata buffer
-                    let metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                    let metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                     // post this data buffer to the ring buffer
                     unsafe {
                         let dpseg = custom_mlx5_dpseg_start(
@@ -2331,7 +2498,7 @@ impl Datapath for Mlx5Connection {
                             dpseg,
                             metadata_mbuf.data(),
                             metadata_mbuf.mempool(),
-                            metadata_mbuf.registration_unit(),
+                            metadata_mbuf.lkey(),
                             metadata_mbuf.offset() as _,
                             metadata_mbuf.data_len() as _,
                         );
@@ -2476,7 +2643,7 @@ impl Datapath for Mlx5Connection {
 
                     // now put this inside an mbuf and post it.
                     // attach this data buffer to a metadata buffer
-                    let metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                    let metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
 
                     // post this data buffer to the ring buffer
                     unsafe {
@@ -2491,7 +2658,7 @@ impl Datapath for Mlx5Connection {
                             dpseg,
                             metadata_mbuf.data(),
                             metadata_mbuf.mempool(),
-                            metadata_mbuf.registration_unit(),
+                            metadata_mbuf.lkey(),
                             metadata_mbuf.offset() as _,
                             metadata_mbuf.data_len() as _,
                         );
@@ -2578,7 +2745,7 @@ impl Datapath for Mlx5Connection {
                             curr_dpseg,
                             seg.data(),
                             seg.mempool(),
-                            seg.registration_unit(),
+                            seg.lkey(),
                             0,
                             (seg.data_len() + cornflakes_libos::utils::TOTAL_HEADER_SIZE) as _,
                         );
@@ -2805,7 +2972,7 @@ impl Datapath for Mlx5Connection {
                 coded_output_stream.flush()?;
             }
 
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
 
             let _ = self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
         }
@@ -2953,7 +3120,7 @@ impl Datapath for Mlx5Connection {
                 }
             }
 
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
             let _ = self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
         }
 
@@ -3075,7 +3242,7 @@ impl Datapath for Mlx5Connection {
                     "Could not copy whole buffer into allocated buffer"
                 );
             }
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
             let _ = self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
         }
 
@@ -3232,7 +3399,7 @@ impl Datapath for Mlx5Connection {
                     offset += seg.len();
                 }
             }
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
 
             let (curr_dpseg, curr_completion) =
                 self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
@@ -3268,7 +3435,7 @@ impl Datapath for Mlx5Connection {
                                         dpseg,
                                         mbuf_metadata.data(),
                                         mbuf_metadata.mempool(),
-                                        mbuf_metadata.registration_unit(),
+                                        mbuf_metadata.lkey(),
                                         mbuf_metadata.offset() as _,
                                         mbuf_metadata.data_len() as _,
                                     ),
@@ -3362,7 +3529,7 @@ impl Datapath for Mlx5Connection {
         // for queue datapath buffer, copy the header directly into the front
         let data_len = datapath_buffer.as_ref().len() - cornflakes_libos::utils::TOTAL_HEADER_SIZE;
         self.copy_hdr(&mut datapath_buffer, conn_id, msg_id, data_len)?;
-        let mut metadata_mbuf = MbufMetadata::from_buf(datapath_buffer);
+        let mut metadata_mbuf = MbufMetadata::from_buf(datapath_buffer)?;
 
         let dpseg = unsafe { custom_mlx5_dpseg_start(self.thread_context.get_context_ptr(), 0) };
         let completion =
@@ -3489,7 +3656,7 @@ impl Datapath for Mlx5Connection {
                 }
             };
             self.copy_hdr(&mut datapath_buffer, conn_id, msg_id, data_len)?;
-            let mut metadata_mbuf = MbufMetadata::from_buf(datapath_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(datapath_buffer)?;
             let (curr_dpseg, curr_completion) =
                 self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
             dpseg = curr_dpseg;
@@ -3661,7 +3828,7 @@ impl Datapath for Mlx5Connection {
                     ring_buffer_state.0,
                     metadata_mbuf.data(),
                     metadata_mbuf.mempool(),
-                    metadata_mbuf.registration_unit(),
+                    metadata_mbuf.lkey(),
                     metadata_mbuf.offset() as _,
                     metadata_mbuf.data_len() as _,
                 );
@@ -3710,7 +3877,7 @@ impl Datapath for Mlx5Connection {
                 ring_buffer_state.0 = first_copy_dpseg;
                 ring_buffer_state.1 = first_copy_completion;
                 // turn the data buffer into metadata and post it
-                let mut metadata_mbuf = MbufMetadata::from_buf(allocated_header_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(allocated_header_buffer)?;
 
                 let (curr_dpseg, curr_completion) = self.post_mbuf_metadata(
                     &mut metadata_mbuf,
@@ -3754,7 +3921,7 @@ impl Datapath for Mlx5Connection {
                 ring_buffer_state.0 = first_copy_dpseg;
                 ring_buffer_state.1 = first_copy_completion;
                 // turn the data buffer into metadata and post it
-                let mut metadata_mbuf = MbufMetadata::from_buf(allocated_header_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(allocated_header_buffer)?;
 
                 let (curr_dpseg, curr_completion) = self.post_mbuf_metadata(
                     &mut metadata_mbuf,
@@ -3797,7 +3964,7 @@ impl Datapath for Mlx5Connection {
         if copy_context.data_len() > 0 {
             for serialization_copy_buf in copy_context.copy_buffers_slice().iter() {
                 let buffer = serialization_copy_buf.get_buffer();
-                let mut metadata_mbuf = MbufMetadata::from_buf(buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(buffer)?;
                 let (curr_dpseg, curr_completion) = self.post_mbuf_metadata(
                     &mut metadata_mbuf,
                     ring_buffer_state.0,
@@ -3947,7 +4114,7 @@ impl Datapath for Mlx5Connection {
             }
 
             // turn the data buffer into metadata and post it
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
 
             let (curr_dpseg, curr_completion) =
                 self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
@@ -3963,7 +4130,7 @@ impl Datapath for Mlx5Connection {
                 .iter()
             {
                 let buffer = serialization_copy_buf.get_buffer();
-                let mut metadata_mbuf = MbufMetadata::from_buf(buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(buffer)?;
                 let (curr_dpseg, curr_completion) =
                     self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
                 dpseg = curr_dpseg;
@@ -4132,7 +4299,7 @@ impl Datapath for Mlx5Connection {
                     );
                 }
             }
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
             tracing::debug!(metadata_mbuf =? metadata_mbuf, "Calling post mbuf metadata for copied data");
             let (curr_dpseg, curr_completion) =
                 self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
@@ -4168,7 +4335,7 @@ impl Datapath for Mlx5Connection {
                                         dpseg,
                                         mbuf_metadata.data(),
                                         mbuf_metadata.mempool(),
-                                        mbuf_metadata.registration_unit(),
+                                        mbuf_metadata.lkey(),
                                         mbuf_metadata.offset() as _,
                                         mbuf_metadata.data_len() as _,
                                     ),
@@ -4358,7 +4525,7 @@ impl Datapath for Mlx5Connection {
                     offset += seg.len();
                 }
             }
-            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+            let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
             let (curr_dpseg, curr_completion) =
                 self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
             dpseg = curr_dpseg;
@@ -4393,7 +4560,7 @@ impl Datapath for Mlx5Connection {
                                         dpseg,
                                         mbuf_metadata.data(),
                                         mbuf_metadata.mempool(),
-                                        mbuf_metadata.registration_unit(),
+                                        mbuf_metadata.lkey(),
                                         mbuf_metadata.offset() as _,
                                         mbuf_metadata.data_len() as _,
                                     ),
@@ -4435,7 +4602,7 @@ impl Datapath for Mlx5Connection {
     }
 
     fn push_arena_ordered_sgas_iterator<'sge>(
-        &self,
+        &mut self,
         mut sgas: impl Iterator<Item = Result<(MsgID, ConnID, ArenaOrderedSga<'sge>)>>,
     ) -> Result<()> {
         #[cfg(feature = "profiler")]
@@ -4574,7 +4741,7 @@ impl Datapath for Mlx5Connection {
                     offset += seg.len();
                 }
 
-                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                 let (curr_dpseg, curr_completion) =
                     self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
                 dpseg = curr_dpseg;
@@ -4624,7 +4791,7 @@ impl Datapath for Mlx5Connection {
     }
 
     fn push_ordered_sgas_iterator<'sge>(
-        &self,
+        &mut self,
         mut sgas: impl Iterator<Item = Result<(MsgID, ConnID, OrderedSga<'sge>)>>,
     ) -> Result<()> {
         #[cfg(feature = "profiler")]
@@ -4763,7 +4930,7 @@ impl Datapath for Mlx5Connection {
                     offset += seg.len();
                 }
 
-                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer);
+                let mut metadata_mbuf = MbufMetadata::from_buf(data_buffer)?;
                 let (curr_dpseg, curr_completion) =
                     self.post_mbuf_metadata(&mut metadata_mbuf, dpseg, completion);
                 dpseg = curr_dpseg;
@@ -4996,7 +5163,7 @@ impl Datapath for Mlx5Connection {
     }
 
     fn get_metadata(&self, buf: Self::DatapathBuffer) -> Result<Option<Self::DatapathMetadata>> {
-        Ok(Some(MbufMetadata::from_buf(buf)))
+        Ok(Some(MbufMetadata::from_buf(buf)?))
     }
 
     #[inline]
@@ -5005,14 +5172,37 @@ impl Datapath for Mlx5Connection {
     }
 
     #[inline]
-    fn recover_metadata_with_status(
-        &self,
+    fn recover_metadata_if_pinned_and_insert_into_zero_copy_cache(
+        &mut self,
         buf: &[u8],
-    ) -> Result<cornflakes_libos::datapath::MetadataStatus<Self>>
-    where
-        Self: Sized,
-    {
-        self.allocator.recover_buffer_with_segment_info(buf)
+    ) -> Result<Option<Self::DatapathMetadata>> {
+        match self
+            .zero_copy_cache
+            .record_access_and_get_io_info_if_pinned(buf)
+        {
+            Some((mempool_id, lkey)) => {
+                match self.allocator.recover_from_mempool(mempool_id, buf)? {
+                    Some(mut m) => {
+                        // m that is returned has lkey of 0, as allocator doesn't have up to date
+                        // lkey information
+                        tracing::debug!("Zcc says addr {:?} is pinned", buf.as_ptr());
+                        m.set_lkey(lkey as u32);
+                        return Ok(Some(m));
+                    }
+                    None => {
+                        tracing::debug!(
+                            "Zero copy cache says addr {:?} is not pinned",
+                            buf.as_ptr()
+                        );
+                        return Ok(None);
+                    }
+                }
+            }
+            None => {
+                tracing::debug!("Zero copy cache doesn't have addr {:?}", buf.as_ptr());
+                Ok(None)
+            }
+        }
     }
 
     fn add_memory_pool(
@@ -5022,26 +5212,30 @@ impl Datapath for Mlx5Connection {
         num_registration_units: usize,
         register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
-        // use 2MB pages for data, 2MB pages for metadata (?)
-        // println!("Inside add memory pool");
         let actual_size = cornflakes_libos::allocator::align_to_pow2(size);
         let mempool_params = sizes::MempoolAllocationParams::new(
             min_elts,
             PGSIZE_2MB,
             actual_size,
-            num_registration_units,
+            1, // as mempool will be managed by zcc, cornflakes initializes as 1 slab
         )
         .wrap_err("Incorrect mempool allocation params")?;
         tracing::info!(mempool_params = ?mempool_params, "Adding mempool");
-        let data_mempool = DataMempool::new(
-            &mempool_params,
-            &self.thread_context,
-            true,
-            register_at_start,
-        )?;
+        let data_mempool = DataMempool::new(&mempool_params, &self.thread_context, true, false)?;
+        let mut cornflakes_slab = data_mempool.get_cornflakes_mlx5_slab()?;
+        tracing::debug!("Cornflakes slab: {:?}", cornflakes_slab);
         let id = self
             .allocator
             .add_mempool(mempool_params.get_item_len(), data_mempool)?;
+        cornflakes_slab.set_id(id);
+
+        // initialize mempool into zero copy cache
+        self.zero_copy_cache.initialize_slab(
+            &cornflakes_slab,
+            num_registration_units,
+            register_at_start,
+            self.thread_context.get_global_context_rc(),
+        );
 
         Ok(vec![id])
     }
@@ -5049,15 +5243,6 @@ impl Datapath for Mlx5Connection {
     #[inline]
     fn has_mempool(&self, size: usize) -> bool {
         return self.allocator.has_mempool(size);
-    }
-
-    fn register_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
-        self.allocator
-            .register_segment(seg, self.thread_context.get_context_ptr())
-    }
-
-    fn unregister_segment(&mut self, seg: &CornflakesSegment) -> Result<()> {
-        self.allocator.unregister_segment(seg)
     }
 
     fn header_size(&self) -> usize {
@@ -5104,7 +5289,14 @@ impl Datapath for Mlx5Connection {
         33
     }
 
-    fn get_mut_zcc(&mut self) -> &mut ZeroCopyCache<CornflakesSegment> {
-        &mut self.zero_copy_cache
+    fn initialize_zero_copy_cache_thread(&self) {
+        // create a clone of the zero copy cache for this thread
+        let mut zcc_clone = self.zero_copy_cache.clone();
+
+        // create a global thread context ptr for pinning unpinning thread
+        let global_thread_ptr = self.thread_context.get_global_context_rc();
+        std::thread::spawn(move || {
+            zcc_clone.pin_and_unpin_thread(global_thread_ptr);
+        });
     }
 }

@@ -5,7 +5,6 @@ use super::{
 };
 use color_eyre::eyre::{bail, Result};
 use std::{io::Write, net::Ipv4Addr, str::FromStr, time::Duration};
-use zero_copy_cache::data_structures::{Segment, ZeroCopyCache};
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum InlineMode {
@@ -212,54 +211,6 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct CornflakesSegment {
-    mempool_id: MempoolID,
-    registration_unit: usize,
-    page_size: usize,
-}
-
-impl Segment for CornflakesSegment {
-    type SegmentId = (MempoolID, usize);
-    fn get_segment_id(&self) -> Self::SegmentId {
-        (self.mempool_id, self.registration_unit)
-    }
-
-    fn get_page_size(&self) -> u64 {
-        self.page_size as _
-    }
-}
-
-impl CornflakesSegment {
-    pub fn new(id: MempoolID, registration_unit: usize, page_size: usize) -> Self {
-        CornflakesSegment {
-            mempool_id: id,
-            registration_unit,
-            page_size,
-        }
-    }
-
-    pub fn get_registration_unit(&self) -> usize {
-        self.registration_unit
-    }
-
-    pub fn get_mempool_id(&self) -> MempoolID {
-        self.mempool_id
-    }
-}
-
-pub enum MetadataStatus<D>
-where
-    D: Datapath,
-{
-    /// Allocated by allocator & is zero-copy-able
-    Pinned((D::DatapathMetadata, CornflakesSegment)),
-    /// Allocated by allocator but currently not pinned
-    UnPinned((D::DatapathMetadata, CornflakesSegment)),
-    /// Not allocated by allocator
-    Arbitrary,
-}
-
 /// Functionality accessible to higher level application on top of datapath metadata objects.
 pub trait MetadataOps {
     fn offset(&self) -> usize;
@@ -407,7 +358,7 @@ pub trait Datapath {
 
     /// Push an iterator over ordered SGAS.
     fn push_ordered_sgas_iterator<'sge>(
-        &self,
+        &mut self,
         _ordered_sgas: impl Iterator<Item = Result<(MsgID, ConnID, OrderedSga<'sge>)>>,
     ) -> Result<()> {
         Ok(())
@@ -521,7 +472,7 @@ pub trait Datapath {
     }
 
     fn push_arena_ordered_sgas_iterator<'sge>(
-        &self,
+        &mut self,
         _arena_ordered_sgas: impl Iterator<Item = Result<(MsgID, ConnID, ArenaOrderedSga<'sge>)>>,
     ) -> Result<()> {
         Ok(())
@@ -545,11 +496,6 @@ pub trait Datapath {
     /// Check if any outstanding packets have timed out.
     fn timed_out(&self, time_out: Duration) -> Result<Vec<(MsgID, ConnID)>>;
 
-    /// Checks whether input buffer is registered.
-    /// Args:
-    /// @buf: slice to check if address is registered or not.
-    fn is_registered(&self, buf: &[u8]) -> bool;
-
     /// Allocate a datapath buffer with the given size and alignment.
     /// Args:
     /// @size: minimum size of buffer to be allocated.
@@ -569,14 +515,10 @@ pub trait Datapath {
     /// @buf: Buffer.
     fn recover_metadata(&self, buf: &[u8]) -> Result<Option<Self::DatapathMetadata>>;
 
-    /// Takes a buffer and recovers underlying metadata, along with information about whether it is
-    /// currently pinned and which segment it is within.
-    /// Args:
-    /// @buf: Buffer.
-    fn recover_metadata_with_status(&self, _buf: &[u8]) -> Result<MetadataStatus<Self>>
-    where
-        Self: Sized,
-    {
+    fn recover_metadata_if_pinned_and_insert_into_zero_copy_cache(
+        &mut self,
+        _buf: &[u8],
+    ) -> Result<Option<Self::DatapathMetadata>> {
         unimplemented!();
     }
 
@@ -597,14 +539,11 @@ pub trait Datapath {
         register_at_start: bool,
     ) -> Result<Vec<MempoolID>>;
 
+    /// Checks whether pointer was allocated by our memory pool.
+    fn is_registered(&self, buf: &[u8]) -> bool;
+
     /// Checks whether datapath has mempool of size size given (must be power of 2).
     fn has_mempool(&self, size: usize) -> bool;
-
-    /// Register given mempool ID
-    fn register_segment(&mut self, seg: &CornflakesSegment) -> Result<()>;
-
-    /// Unregister given Cornflakes Segment.
-    fn unregister_segment(&mut self, seg: &CornflakesSegment) -> Result<()>;
 
     fn header_size(&self) -> usize;
 
@@ -647,8 +586,7 @@ pub trait Datapath {
         8192
     }
 
-    /// Zero copy cache stats
-    fn get_mut_zcc(&mut self) -> &mut ZeroCopyCache<CornflakesSegment> {
-        unimplemented!()
+    fn initialize_zero_copy_cache_thread(&self) {
+        unimplemented!();
     }
 }

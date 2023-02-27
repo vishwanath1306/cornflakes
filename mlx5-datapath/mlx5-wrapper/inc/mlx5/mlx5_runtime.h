@@ -48,8 +48,10 @@ int custom_mlx5_tx_descriptors_available(struct custom_mlx5_per_thread_context *
  * Args:
  * @wqe_idx: index into ring buffer for completion.
  * @v: transmission queue.
+ * @callback: Callback on every address.
  * */
-void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v);
+typedef void (*rust_callback)(void*,void*, uint64_t);
+void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v, rust_callback completion_callback, void *zcc);
 
 /*
  * Process completions - processes any transmission completions.
@@ -58,12 +60,14 @@ void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v)
  * Args:
  * @per_thread_context: Mlx5 per thread context
  * @budget: Maximum number of completions to process.
- *
+ * @callback: Callback on every address.
  * Returns:
  * Number of processed completions.
  * */
 int custom_mlx5_process_completions(struct custom_mlx5_per_thread_context *per_thread_context,
-                                unsigned int budget);
+                                unsigned int budget,
+                                rust_callback completion_callback,
+                                void *zcc);
 
 /* 
  * mlx5_gather_rx - Gathers received packets so far into given mbuf array.
@@ -255,8 +259,7 @@ struct custom_mlx5_transmission_info *custom_mlx5_advance_completion_info(struct
  * @dpseg - Pointer to the dpseg.
  * @data - Pointer to data.
  * @mempool - Mempool data comes from. Required to query lkey.
- * @registation_unit - Registration unit inside mempool.
- * @data_off - data offset into mbuf.
+ * @lkey - Lkey associated with data being submitted.
  * @data_len - size of data to reference inside mbuf.
  *
  * Returns:
@@ -266,7 +269,7 @@ struct mlx5_wqe_data_seg *custom_mlx5_add_dpseg(struct custom_mlx5_per_thread_co
                 struct mlx5_wqe_data_seg *dpseg,
                 void *data,
                 struct custom_mlx5_mempool *mempool,
-                size_t registration_unit,
+                uint32_t lkey,
                 size_t data_off,
                 size_t data_len);
 

@@ -39,7 +39,7 @@ use std::{
 
 pub static mut MIN_MEMPOOL_SIZE: usize = 262144;
 pub static mut NUM_REGISTRATIONS: usize = 1;
-const REGISTER_AT_ALLOC: bool = true;
+pub static mut REGISTER_AT_START: bool = false;
 
 // 8 bytes at front of message for framing
 pub const REQ_TYPE_SIZE: usize = 4;
@@ -470,7 +470,7 @@ where
                 size,
                 unsafe { MIN_MEMPOOL_SIZE },
                 unsafe { NUM_REGISTRATIONS },
-                REGISTER_AT_ALLOC,
+                unsafe { REGISTER_AT_START },
             )?);
             tracing::info!("Added mempool");
             match datapath.allocate(size)? {

@@ -121,6 +121,15 @@ pub extern "C" fn Mlx5Connection_set_inline_mode(
 }
 
 #[no_mangle]
+pub extern "C" fn Mlx5Connection_initialize_zero_copy_cache_thread(
+    conn: *mut ::std::os::raw::c_void,
+) {
+    let conn_box = unsafe { Box::from_raw(conn as *mut Mlx5Connection) };
+    conn_box.initialize_zero_copy_cache_thread();
+    Box::into_raw(conn_box);
+}
+
+#[no_mangle]
 pub extern "C" fn Mlx5Connection_add_memory_pool(
     conn: *mut ::std::os::raw::c_void,
     buf_size: usize,

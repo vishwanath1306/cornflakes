@@ -58,6 +58,21 @@ int custom_mlx5_register_mempool_unit(struct custom_mlx5_global_context *context
 int custom_mlx5_deregister_mempool_unit(struct custom_mlx5_mempool *mempool,
         size_t registration_unit);
 
+/* 
+ * Registers given memory address with the NIC.
+ * */
+int32_t custom_mlx5_register_region(struct custom_mlx5_global_context *context,
+        void *starting_address,
+        size_t len,
+        struct ibv_mr **mr,
+        int registration_flags);
+
+/*
+ * Unregisters given memory region with the NIC.
+ * */
+int custom_mlx5_deregister_region(struct ibv_mr *mr);
+
+
 /* Unregisters region backing a memory pool, if necessary, and frees memory pool.*/
 int custom_mlx5_deregister_and_free_custom_mlx5_mempool(struct custom_mlx5_mempool *mempool);
 

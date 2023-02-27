@@ -121,9 +121,9 @@ int custom_mlx5_register_mempool_unit(struct custom_mlx5_global_context *context
             return -errno;
         }
         info->lkey = info->mr->lkey;
-        NETPERF_DEBUG("Registering mempool %p reg unit %lu; with lkey %u", mempool, registration_unit, info->lkey);
+        NETPERF_INFO("Registering mempool %p reg unit %lu; with lkey %u, base addr %p and registration len %lu", mempool, registration_unit, info->lkey, info->starting_address, mempool->registration_len);
     } else {
-        NETPERF_DEBUG("Registering mempool %p reg unit %lu already registered; doing nothing", mempool, registration_unit);
+        NETPERF_INFO("Registering mempool %p reg unit %lu already registered; doing nothing", mempool, registration_unit);
     }
     return 0;
 }
@@ -163,7 +163,7 @@ int custom_mlx5_create_mempool(struct custom_mlx5_global_context *context,
                 custom_mlx5_mempool_destroy(mempool);
                 return ret;
             }
-            NETPERF_DEBUG("Successfully registered all %lu units of memory pool %p", mempool->nr_registrations, mempool);
+            NETPERF_INFO("Successfully registered all %lu units of memory pool %p", mempool->nr_registrations, mempool);
         }
     }
     NETPERF_DEBUG("Successfully created memory pool %p", mempool);
@@ -172,6 +172,7 @@ int custom_mlx5_create_mempool(struct custom_mlx5_global_context *context,
 
 int custom_mlx5_deregister_mempool_unit(struct custom_mlx5_mempool *mempool,
         size_t registration_unit) {
+    NETPERF_INFO("Deregistering mempool unit for mempool %p reg unit %lu", mempool, registration_unit);
     struct custom_mlx5_registration_info *info = &(mempool->registrations[registration_unit]);
     if (info->lkey == -1 && info->mr == NULL) {
         return 0;
@@ -187,6 +188,30 @@ int custom_mlx5_deregister_mempool_unit(struct custom_mlx5_mempool *mempool,
     return 0;
 }
 
+/* 
+ * Registers given memory address with the NIC.
+ * */
+int32_t custom_mlx5_register_region(struct custom_mlx5_global_context *context,
+        void *starting_address,
+        size_t len,
+        struct ibv_mr **mr,
+        int registration_flags) {
+    *mr = ibv_reg_mr(context->pd, starting_address, len, registration_flags);
+    if (*mr == NULL) {
+        NETPERF_ERROR("Failed to do memory reg for region %p len %lu: %s", starting_address, len, strerror(errno));
+        return -errno;
+    }
+    return (int32_t)((*mr)->lkey);
+}
+
+/*
+ * Unregisters given memory region with the NIC.
+ * */
+int custom_mlx5_deregister_region(struct ibv_mr *mr) {
+    int ret = ibv_dereg_mr(mr);
+    mr = NULL;
+    return ret;
+}
 int custom_mlx5_deregister_and_free_custom_mlx5_mempool(struct custom_mlx5_mempool *mempool) {
     for (size_t i = 0; i < mempool->nr_registrations; i++) {
         custom_mlx5_deregister_mempool_unit(mempool, i);
