@@ -232,7 +232,15 @@ impl DatapathMemoryPool for DataMempool {
         let lkey = match unsafe { custom_mlx5_mempool_get_lkey(self.mempool(), registration_unit) }
         {
             -1 => None,
-            x => Some(x as u32),
+            x => {
+                tracing::info!(
+                    "Allocating data buf {:?} and adding lkey: {} from reg unit {}",
+                    data,
+                    x,
+                    registration_unit
+                );
+                Some(x as u32)
+            }
         };
 
         // recover the ref count index

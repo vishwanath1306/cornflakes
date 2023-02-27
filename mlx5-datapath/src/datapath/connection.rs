@@ -79,7 +79,7 @@ unsafe impl Sync for PinningInfo {}
 
 impl PinningInfo {
     fn is_pinned(&self) -> bool {
-        self.lkey == -1
+        self.lkey != -1
     }
 
     fn get_lkey(&self) -> i32 {
@@ -143,6 +143,13 @@ impl DatapathSlab for CornflakesMlx5Slab {
                 )
             };
             pinning_state.set_lkey(lkey);
+            tracing::debug!(
+                "Pinned segment [{:?}, {:?} + {}]to have lkey {}",
+                start_address,
+                start_address,
+                len,
+                lkey
+            );
         }
     }
 
@@ -2282,11 +2289,11 @@ impl Datapath for Mlx5Connection {
 
         Ok(Mlx5Connection {
             thread_context: context,
-            mode: mode,
+            mode,
             outgoing_window: HashMap::default(),
             active_connections: [None; MAX_CONCURRENT_CONNECTIONS],
             address_to_conn_id: HashMap::default(),
-            allocator: allocator,
+            allocator,
             copying_threshold: 256,
             max_segments: 32,
             inline_mode: InlineMode::default(),
@@ -5178,15 +5185,23 @@ impl Datapath for Mlx5Connection {
                     Some(mut m) => {
                         // m that is returned has lkey of 0, as allocator doesn't have up to date
                         // lkey information
+                        tracing::debug!("Zcc says addr {:?} is pinned", buf.as_ptr());
                         m.set_lkey(lkey as u32);
                         return Ok(Some(m));
                     }
                     None => {
+                        tracing::debug!(
+                            "Zero copy cache says addr {:?} is not pinned",
+                            buf.as_ptr()
+                        );
                         return Ok(None);
                     }
                 }
             }
-            None => Ok(None),
+            None => {
+                tracing::debug!("Zero copy cache doesn't have addr {:?}", buf.as_ptr());
+                Ok(None)
+            }
         }
     }
 
@@ -5195,6 +5210,7 @@ impl Datapath for Mlx5Connection {
         size: usize,
         min_elts: usize,
         num_registration_units: usize,
+        register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
         let actual_size = cornflakes_libos::allocator::align_to_pow2(size);
         let mempool_params = sizes::MempoolAllocationParams::new(
@@ -5207,14 +5223,19 @@ impl Datapath for Mlx5Connection {
         tracing::info!(mempool_params = ?mempool_params, "Adding mempool");
         let data_mempool = DataMempool::new(&mempool_params, &self.thread_context, true, false)?;
         let mut cornflakes_slab = data_mempool.get_cornflakes_mlx5_slab()?;
+        tracing::debug!("Cornflakes slab: {:?}", cornflakes_slab);
         let id = self
             .allocator
             .add_mempool(mempool_params.get_item_len(), data_mempool)?;
         cornflakes_slab.set_id(id);
 
         // initialize mempool into zero copy cache
-        self.zero_copy_cache
-            .initialize_slab(&cornflakes_slab, num_registration_units);
+        self.zero_copy_cache.initialize_slab(
+            &cornflakes_slab,
+            num_registration_units,
+            register_at_start,
+            self.thread_context.get_global_context_rc(),
+        );
 
         Ok(vec![id])
     }

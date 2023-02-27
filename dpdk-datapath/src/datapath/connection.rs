@@ -1624,6 +1624,7 @@ impl Datapath for DpdkConnection {
         value_size: usize,
         min_elts: usize,
         _num_registration_units: usize,
+        _register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
         let mut ret: Vec<MempoolID> = Vec::default();
         //let num_values = (min_num_values as f64 * 1.20) as usize;

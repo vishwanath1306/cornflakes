@@ -536,6 +536,7 @@ pub trait Datapath {
         size: usize,
         min_elts: usize,
         num_registration_units: usize,
+        register_at_start: bool,
     ) -> Result<Vec<MempoolID>>;
 
     /// Checks whether pointer was allocated by our memory pool.

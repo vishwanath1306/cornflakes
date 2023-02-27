@@ -135,10 +135,16 @@ pub extern "C" fn Mlx5Connection_add_memory_pool(
     buf_size: usize,
     min_elts: usize,
     num_registration_units: usize,
+    register_at_start: bool,
 ) {
     let mut conn_box = unsafe { Box::from_raw(conn as *mut Mlx5Connection) };
     conn_box
-        .add_memory_pool(buf_size, min_elts, num_registration_units)
+        .add_memory_pool(
+            buf_size,
+            min_elts,
+            num_registration_units,
+            register_at_start,
+        )
         .unwrap();
     Box::into_raw(conn_box);
 }

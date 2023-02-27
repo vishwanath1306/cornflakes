@@ -434,7 +434,7 @@ struct mlx5_wqe_data_seg *custom_mlx5_add_dpseg(struct custom_mlx5_per_thread_co
     struct custom_mlx5_txq *v = &per_thread_context->txq;
     dpseg->byte_count = htobe32(data_len);
     dpseg->addr = htobe64((uint64_t)((char *)data + data_off));
-    dpseg->lkey = lkey;
+    dpseg->lkey = htobe32(lkey);
     return custom_mlx5_incr_dpseg(v, dpseg);
 }
 

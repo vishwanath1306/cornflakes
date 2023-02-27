@@ -424,6 +424,7 @@ fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -
         FunctionArg::CArg(CArgInfo::arg("value_size", "*const ::std::os::raw::c_char")),
         FunctionArg::CArg(CArgInfo::arg("min_mempool_size", "usize")),
         FunctionArg::CArg(CArgInfo::arg("num_registrations", "usize")),
+        FunctionArg::CArg(CArgInfo::arg("register_at_start", "usize")),
     ];
     let func_context =
         FunctionContext::new_extern_c(&format!("{}_load_ycsb_db", datapath), true, args, true);
@@ -442,6 +443,7 @@ fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -
     unsafe {
         cf_kv::MIN_MEMPOOL_SIZE = min_mempool_size;
         cf_kv::NUM_REGISTRATIONS = num_registrations;
+        cf_kv::REGISTER_AT_START = (register_at_start == 1);
     }
     let load_generator = cf_kv::ycsb::YCSBServerLoader::new(value_size_generator, num_values, num_keys, false);
     let (kv, list_kv, _, _) = load_generator.new_kv_state(file_str, conn_box.as_mut(), false).unwrap();
