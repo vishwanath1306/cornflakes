@@ -83,6 +83,66 @@ where
         Ok(())
     }
 
+    fn handle_get_from_list(
+        &self,
+        list_kv_server: &ListKVServer<D>,
+        pkt: &ReceivedPkt<D>,
+        builder: &mut FlatBufferBuilder,
+    ) -> Result<()> {
+        let get_request = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("Deserialize pkt");
+            root::<cf_kv_fbs::GetFromListReq>(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])?
+        };
+        let value = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("Retrieve value");
+            match list_kv_server.get(get_request.key().unwrap()) {
+                Some(list) => match list.get(get_request.idx() as usize) {
+                    Some(v) => v,
+                    None => {
+                        bail!(
+                            "Could not find idx {} for key {} in list kv server",
+                            get_request.idx(),
+                            get_request.key().unwrap(),
+                        );
+                    }
+                },
+                None => {
+                    bail!(
+                        "Could not find value for key: {:?}",
+                        get_request.key().unwrap()
+                    );
+                }
+            }
+        };
+
+        tracing::debug!(
+            "For given key {:?}, found value {:?} with length {}",
+            get_request.key().unwrap(),
+            value.as_ref(),
+            value.as_ref().len()
+        );
+        let args = {
+            cf_kv_fbs::GetRespArgs {
+                val: {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("Generate response args");
+                    Some(builder.create_vector_direct::<u8>(value.as_ref()))
+                },
+                id: get_request.id(),
+            }
+        };
+
+        let get_resp = cf_kv_fbs::GetResp::create(builder, &args);
+        {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("finish serialize");
+            builder.finish(get_resp, None);
+        }
+        Ok(())
+    }
+
     fn handle_put(
         &self,
         kv_server: &mut KVServer<D>,
@@ -189,12 +249,21 @@ where
         pkt: &ReceivedPkt<D>,
         builder: &mut FlatBufferBuilder,
     ) -> Result<()> {
-        let getlist_request = root::<cf_kv_fbs::GetListReq>(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])?;
+        let getlist_request = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("deserialize");
+            root::<cf_kv_fbs::GetListReq>(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])?
+        };
         let key = getlist_request.key().unwrap();
         if self.use_linked_list() {
             let range_start = getlist_request.rangestart();
             let range_end = getlist_request.rangeend();
-            let mut node_option = linked_list_kv_server.get(key);
+
+            let mut node_option = {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("do get on key");
+                linked_list_kv_server.get(key)
+            };
 
             let range_len = {
                 // TODO: hack: flatbuffers doesn't seem to be recognizing -1
@@ -217,7 +286,11 @@ where
                 }
             };
 
-            let mut node_option = linked_list_kv_server.get(key);
+            let mut node_option = {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("do get on key 2nd time");
+                linked_list_kv_server.get(key)
+            };
             let mut idx = 0;
             let mut args_vec: Vec<cf_kv_fbs::ValueArgs> = Vec::with_capacity(range_len);
             while let Some(node) = node_option {
@@ -229,6 +302,8 @@ where
                     break;
                 }
 
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("append node to list");
                 args_vec.push(cf_kv_fbs::ValueArgs {
                     data: Some(builder.create_vector_direct::<u8>(node.as_ref().get_data())),
                 });
@@ -236,6 +311,20 @@ where
                 node_option = node.get_next();
                 idx += 1;
             }
+            {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("finish serializing builder");
+                let args_vec: Vec<WIPOffset<cf_kv_fbs::Value>> = args_vec
+                    .iter()
+                    .map(|args| cf_kv_fbs::Value::create(builder, args))
+                    .collect();
+                let getlist_resp_args = cf_kv_fbs::GetListRespArgs {
+                    id: getlist_request.id(),
+                    vals: Some(builder.create_vector(args_vec.as_slice())),
+                };
+                let getlist_resp = cf_kv_fbs::GetListResp::create(builder, &getlist_resp_args);
+                builder.finish(getlist_resp, None)
+            };
         } else {
             let vals = match list_kv_server.get(key) {
                 Some(v) => v,
@@ -257,8 +346,12 @@ where
                 id: getlist_request.id(),
                 vals: Some(builder.create_vector(args_vec.as_slice())),
             };
-            let getlist_resp = cf_kv_fbs::GetListResp::create(builder, &getlist_resp_args);
-            builder.finish(getlist_resp, None);
+            {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("finish serializing builder");
+                let getlist_resp = cf_kv_fbs::GetListResp::create(builder, &getlist_resp_args);
+                builder.finish(getlist_resp, None)
+            };
         }
         Ok(())
     }
@@ -359,6 +452,13 @@ where
                         &mut self.builder,
                     )?;
                 }
+                MsgType::GetFromList => {
+                    self.serializer.handle_get_from_list(
+                        &self.list_kv_server,
+                        &pkt,
+                        &mut self.builder,
+                    )?;
+                }
                 MsgType::GetM(_size) => {
                     self.serializer.handle_getm(
                         &self.kv_server,
@@ -368,6 +468,8 @@ where
                     )?;
                 }
                 MsgType::GetList(_size) => {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("handle getlist flatbuffers");
                     self.serializer.handle_getlist(
                         &self.list_kv_server,
                         &self.linked_list_kv_server,
@@ -661,6 +763,25 @@ where
             key: Some(builder.create_string(key.as_ref())),
         };
         let get_req = cf_kv_fbs::GetReq::create(&mut builder, &args);
+        builder.finish(get_req, None);
+        Ok(copy_into_buf(buf, &builder))
+    }
+
+    fn serialize_get_from_list(
+        &self,
+        buf: &mut [u8],
+        key: &str,
+        idx: usize,
+        _datapath: &D,
+    ) -> Result<usize> {
+        let mut builder = FlatBufferBuilder::new();
+        let args = cf_kv_fbs::GetFromListReqArgs {
+            // TODO: actually add in ID
+            id: 0,
+            idx: idx as u32,
+            key: Some(builder.create_string(key.as_ref())),
+        };
+        let get_req = cf_kv_fbs::GetFromListReq::create(&mut builder, &args);
         builder.finish(get_req, None);
         Ok(copy_into_buf(buf, &builder))
     }

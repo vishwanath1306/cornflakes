@@ -2,15 +2,16 @@ use super::super::{
     datapath::{Datapath, ReceivedPkt},
     high_timeout_at_start,
     loadgen::{
-        client_threads::ThreadStats,
+        client_threads::{MeasuredThreadStatsOnly, ThreadStats},
         request_schedule::{PacketSchedule, SpinTimer},
     },
     no_retries_timeout,
-    timing::ManualHistogram,
+    timing::{ManualHistogram, SizedManualHistogram},
     utils::AddressInfo,
     MsgID,
 };
-use color_eyre::eyre::{Result, WrapErr};
+use byteorder::{ByteOrder, LittleEndian};
+use color_eyre::eyre::{bail, Result, WrapErr};
 use cornflakes_utils::get_thread_latlog;
 use std::time::{Duration, Instant};
 
@@ -20,6 +21,16 @@ static GLOBAL_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub trait ClientSM {
     type Datapath: Datapath;
+
+    fn update_received_and_sent(&mut self, _unique_msgids_received: Vec<MsgID>) -> Result<()> {
+        Ok(())
+    }
+
+    fn get_current_id(&self) -> u32;
+
+    fn increment_noop_sent(&mut self);
+
+    fn get_noops_sent(&self) -> usize;
 
     fn uniq_received_so_far(&self) -> usize;
 
@@ -38,6 +49,34 @@ pub trait ClientSM {
     fn increment_num_timed_out(&mut self);
 
     fn server_addr(&self) -> AddressInfo;
+
+    fn check_ready(&self, ready_file: &Option<String>) -> Result<bool> {
+        match ready_file {
+            Some(f) => {
+                let exists = std::path::Path::new(f.as_str()).is_file();
+                if exists {
+                    match std::fs::read_to_string(f.as_str()) {
+                        Ok(x) => {
+                            if x.trim() == "ready".to_string() {
+                                return Ok(true);
+                            } else {
+                                tracing::info!("File there but says {}", x);
+                            }
+                        }
+                        Err(e) => {
+                            bail!("Could not read file: {:?}", e);
+                        }
+                    }
+                }
+                tracing::info!("Did not ready ready from {}", f);
+                return Ok(false);
+            }
+            None => {
+                tracing::info!("No ready file arg; ready");
+                return Ok(true);
+            }
+        }
+    }
 
     fn get_next_msg(
         &mut self,
@@ -63,7 +102,19 @@ pub trait ClientSM {
 
     fn cleanup(&mut self, connection: &mut Self::Datapath) -> Result<()>;
 
+    fn get_mut_sized_rtts(&mut self) -> &mut SizedManualHistogram;
+
+    fn get_sized_rtts(&self) -> &SizedManualHistogram;
+
+    fn set_recording_size_rtts(&mut self);
+
+    fn recording_size_rtts(&self) -> bool;
+
     fn get_mut_rtts(&mut self) -> &mut ManualHistogram;
+
+    fn record_sized_rtt(&mut self, rtt: Duration, msg_size: usize) {
+        self.get_mut_sized_rtts().record(msg_size, rtt);
+    }
 
     fn record_rtt(&mut self, rtt: Duration) {
         self.get_mut_rtts().record(rtt.as_nanos() as u64);
@@ -80,6 +131,10 @@ pub trait ClientSM {
     fn sort_rtts(&mut self, start_cutoff: usize) -> Result<()> {
         self.get_mut_rtts().sort_and_truncate(start_cutoff)?;
         Ok(())
+    }
+
+    fn sort_sized_rtts(&mut self) -> Result<()> {
+        self.get_mut_sized_rtts().sort()
     }
 
     fn log_rtts(&mut self, path: &str, start_cutoff: usize) -> Result<()> {
@@ -163,11 +218,16 @@ pub trait ClientSM {
 
             for (pkt, rtt) in recved_pkts.into_iter() {
                 let msg_id = pkt.msg_id();
+                let size = pkt.data_len();
                 if self.process_received_msg(pkt, &datapath).wrap_err(format!(
                     "Error in processing received response for pkt {}.",
                     msg_id
                 ))? {
                     self.record_rtt(rtt);
+                    if self.recording_size_rtts() {
+                        self.record_sized_rtt(rtt, size);
+                    }
+
                     self.increment_uniq_received();
                     recved += 1;
                 }
@@ -185,7 +245,10 @@ pub trait ClientSM {
         time_out: impl Fn(usize) -> Duration,
         no_retries: bool,
         num_threads: usize,
-    ) -> Result<()> {
+        noop_time: Duration,
+        noop_schedule: PacketSchedule,
+        mut msg_ids_received: Option<&mut Vec<MsgID>>,
+    ) -> Result<Duration> {
         let conn_id = datapath
             .connect(self.server_addr())
             .wrap_err("No more available connection IDs")?;
@@ -195,8 +258,33 @@ pub trait ClientSM {
         // tracing::info!("Done with prepping requests");
 
         // wait for all threads to reach this function and "connect"
+        // Run noops
+        tracing::info!("About to run noops");
+        let mut noop_spin_timer = SpinTimer::new(noop_schedule, noop_time);
+        let mut noop_buffer = vec![0u8; super::super::NOOP_LEN];
+        LittleEndian::write_u32(&mut noop_buffer.as_mut_slice(), super::super::NOOP_MAGIC);
+        loop {
+            if noop_spin_timer.done() {
+                tracing::info!("Noops done");
+                break;
+            }
+            // send a noop message
+            let id = self.get_current_id();
+            let buffers = vec![(id, conn_id, noop_buffer.as_slice())];
+            datapath.push_buffers_with_copy(buffers.as_slice())?;
+            self.increment_noop_sent();
+            // wait on the noop timer
+            noop_spin_timer.wait(&mut |_warmup_done: bool| {
+                let _recved_pkts = datapath.pop_with_durations()?;
+                Ok(())
+            })?;
+        }
+
         let _ = GLOBAL_THREAD_COUNT.fetch_add(1, Ordering::SeqCst);
         while GLOBAL_THREAD_COUNT.load(Ordering::SeqCst) != num_threads {}
+
+        // run workload
+        let start = Instant::now();
         let mut spin_timer = SpinTimer::new(schedule, total_time);
 
         while let Some((id, msg)) = self.get_next_msg(&datapath)? {
@@ -209,15 +297,28 @@ pub trait ClientSM {
             datapath.push_buffers_with_copy(&vec![(id, conn_id, msg)])?;
             self.increment_uniq_sent();
 
-            spin_timer.wait(&mut || {
+            spin_timer.wait(&mut |warmup_done: bool| {
                 let recved_pkts = datapath.pop_with_durations()?;
                 for (pkt, rtt) in recved_pkts.into_iter() {
+                    if pkt.is_noop() {
+                        // received old noop response
+                        continue;
+                    }
                     let msg_id = pkt.msg_id();
+                    let msg_size = pkt.data_len();
                     if self.process_received_msg(pkt, &datapath).wrap_err(format!(
                         "Error in processing received response for pkt {}.",
                         msg_id
                     ))? {
-                        self.record_rtt(rtt);
+                        if warmup_done {
+                            self.record_rtt(rtt);
+                            if self.recording_size_rtts() {
+                                self.record_sized_rtt(rtt, msg_size);
+                            }
+                        }
+                        if let Some(ref mut msg_ids) = &mut msg_ids_received {
+                            msg_ids.push(msg_id);
+                        }
                         self.increment_uniq_received();
                     }
                 }
@@ -241,12 +342,105 @@ pub trait ClientSM {
         }
 
         tracing::debug!("Finished sending");
-        Ok(())
+        Ok(start.elapsed())
     }
+}
+
+/// for traces where calculating gbps doesn't make sense
+pub fn run_variable_size_loadgen<D>(
+    thread_id: usize,
+    num_threads: usize,
+    client_id: usize,
+    num_clients: usize,
+    client: &mut impl ClientSM<Datapath = D>,
+    connection: &mut D,
+    total_time_seconds: u64,
+    logfile: Option<String>,
+    mut schedule: PacketSchedule,
+    record_per_size_buckets: bool,
+    avg_rate: u64,
+    ready_file: Option<String>,
+    record_msg_ids: bool,
+) -> Result<MeasuredThreadStatsOnly>
+where
+    D: Datapath,
+{
+    // wait on ready file
+    while !client.check_ready(&ready_file)? {
+        continue;
+    }
+    tracing::warn!("Got past ready check");
+    if record_per_size_buckets {
+        client.set_recording_size_rtts();
+    }
+    let noop_secs = 0;
+    let noop_time = Duration::from_secs(noop_secs);
+    let noop_schedule = PacketSchedule::new(
+        (avg_rate * noop_secs) as usize,
+        avg_rate,
+        super::super::loadgen::request_schedule::DistributionType::Exponential,
+    )?;
+    schedule.start_at_offset(thread_id, client_id, num_threads, num_clients);
+    let mut msg_ids_vec = Vec::with_capacity(schedule.len());
+    let msg_ids_option = match record_msg_ids {
+        true => Some(&mut msg_ids_vec),
+        false => None,
+    };
+    let exp_duration = client
+        .run_open_loop(
+            connection,
+            schedule,
+            Duration::from_secs(total_time_seconds),
+            no_retries_timeout,
+            true,
+            num_threads,
+            noop_time,
+            noop_schedule,
+            msg_ids_option,
+        )?
+        .as_nanos();
+    tracing::info!(thread = thread_id, "Finished running open loop");
+    if record_msg_ids {
+        client.update_received_and_sent(msg_ids_vec)?;
+    }
+    client.sort_rtts(0)?;
+    if client.recording_size_rtts() {
+        client.sort_sized_rtts()?;
+    }
+    // per thread log latency
+    match logfile {
+        Some(x) => {
+            let path = get_thread_latlog(&x, thread_id)?;
+            client.log_rtts(&path, 0)?;
+        }
+        None => {}
+    }
+    tracing::info!(
+        thread = thread_id,
+        noops_sent = client.get_noops_sent(),
+        sent = client.uniq_sent_so_far(),
+        recvd = client.uniq_received_so_far(),
+        "About to calculate stats"
+    );
+    let sized_rtts = client.get_sized_rtts().clone();
+    let stats = MeasuredThreadStatsOnly::new(
+        thread_id,
+        client.uniq_sent_so_far() - client.get_noops_sent(),
+        client.num_received_cutoff(0),
+        client.num_retried(),
+        exp_duration as _,
+        client.get_mut_rtts(),
+        sized_rtts,
+        0,
+    )?;
+    Ok(stats)
 }
 
 pub fn run_client_loadgen<D>(
     thread_id: usize,
+    num_threads: usize,
+    client_id: usize,
+    num_clients: usize,
     client: &mut impl ClientSM<Datapath = D>,
     connection: &mut D,
     retries: bool,
@@ -254,29 +448,45 @@ pub fn run_client_loadgen<D>(
     logfile: Option<String>,
     rate: u64,
     message_size: usize,
-    schedule: PacketSchedule,
-    num_threads: usize,
+    mut schedule: PacketSchedule,
+    ready_file: Option<String>,
 ) -> Result<ThreadStats>
 where
     D: Datapath,
 {
-    let start_run = Instant::now();
+    // wait on ready file
+    while !client.check_ready(&ready_file)? {
+        continue;
+    }
+    tracing::warn!("Got past ready check");
     let timeout = match retries {
         true => high_timeout_at_start,
         false => no_retries_timeout,
     };
 
-    client.run_open_loop(
-        connection,
-        schedule,
-        Duration::from_secs(total_time_seconds),
-        timeout,
-        !retries,
-        num_threads,
+    let noop_secs = 0;
+    let noop_time = Duration::from_secs(noop_secs);
+    let noop_schedule = PacketSchedule::new(
+        (rate * noop_secs) as usize,
+        rate,
+        super::super::loadgen::request_schedule::DistributionType::Exponential,
     )?;
-    tracing::info!(thread = thread_id, "Finished running open loop");
 
-    let exp_duration = start_run.elapsed().as_nanos();
+    schedule.start_at_offset(thread_id, client_id, num_threads, num_clients);
+    let exp_duration = client
+        .run_open_loop(
+            connection,
+            schedule,
+            Duration::from_secs(total_time_seconds),
+            timeout,
+            !retries,
+            num_threads,
+            noop_time,
+            noop_schedule,
+            None,
+        )?
+        .as_nanos();
+    tracing::info!(thread = thread_id, "Finished running open loop");
     client.sort_rtts(0)?;
 
     tracing::info!(thread = thread_id, "Sorted RTTs");
@@ -292,7 +502,7 @@ where
     tracing::info!(thread = thread_id, "About to calculate stats");
     let stats = ThreadStats::new(
         thread_id as u16,
-        client.num_sent_cutoff(0),
+        client.uniq_sent_so_far() - client.get_noops_sent(),
         client.num_received_cutoff(0),
         client.num_retried(),
         exp_duration as _,

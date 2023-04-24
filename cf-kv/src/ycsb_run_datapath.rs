@@ -22,7 +22,7 @@ macro_rules! run_server(
         connection.set_inline_mode($opt.inline_mode);
         tracing::info!(threshold = $opt.copying_threshold.thresh(), "Setting zero-copy copying threshold");
         // init ycsb load generator
-        let load_generator = YCSBServerLoader::new($opt.value_size_generator, $opt.num_values, $opt.num_keys, $opt.allocate_contiguously);
+        let load_generator = YCSBServerLoader::new($opt.value_size_generator, $opt.num_values, $opt.num_keys, $opt.allocate_contiguously, $opt.use_linked_list);
         let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), load_generator, &mut connection, $opt.push_buf_type, $opt.use_linked_list)?;
         kv_server.init(&mut connection)?;
         kv_server.write_ready($opt.ready_file.clone())?;
@@ -89,12 +89,12 @@ macro_rules! run_client(
 
                 connection.set_copying_threshold(usize::MAX);
 
-                let mut ycsb_client = YCSBClient::new_ycsb_client(&opt_clone.queries.as_str(),opt_clone.client_id, i, opt_clone.num_clients, opt_clone.num_threads, opt_clone.value_size_generator.clone(), opt_clone.num_keys, opt_clone.num_values)?;
+                let mut ycsb_client = YCSBClient::new_ycsb_client(&opt_clone.queries.as_str(),opt_clone.client_id, i, opt_clone.num_clients, opt_clone.num_threads, opt_clone.value_size_generator.clone(), opt_clone.num_keys, opt_clone.num_values, opt_clone.use_linked_list)?;
 
                 let mut server_trace: Option<(&str, YCSBServerLoader)> = None;
                 if cfg!(debug_assertions) {
                     if opt_clone.trace_file != "" {
-                        let server_loader = YCSBServerLoader::new(opt_clone.value_size_generator.clone(), opt_clone.num_values, opt_clone.num_keys, false);
+                        let server_loader = YCSBServerLoader::new(opt_clone.value_size_generator.clone(), opt_clone.num_values, opt_clone.num_keys, false, opt_clone.use_linked_list);
                         server_trace = Some((&opt_clone.trace_file.as_str(), server_loader));
                     }
                 }
@@ -103,7 +103,7 @@ macro_rules! run_client(
                 kv_client.init(&mut connection)?;
 
                 let avg_size = opt_clone.value_size_generator.avg_size();
-                cornflakes_libos::state_machine::client::run_client_loadgen(i, &mut kv_client, &mut connection, opt_clone.retries, opt_clone.total_time as _, opt_clone.logfile.clone(), opt_clone.rate as _, (opt_clone.num_values * avg_size) as _, schedule, opt_clone.num_threads as _)
+                cornflakes_libos::state_machine::client::run_client_loadgen(i, opt_clone.num_threads as _, opt_clone.client_id as _, opt_clone.num_clients as _, &mut kv_client, &mut connection, opt_clone.retries, opt_clone.total_time as _, opt_clone.logfile.clone(), opt_clone.rate as _, (opt_clone.num_values * avg_size) as _, schedule, opt_clone.ready_file.clone())
             }));
         }
 
@@ -220,7 +220,7 @@ pub struct YCSBOpt {
     pub inline_mode: InlineMode,
     #[structopt(
         long = "copy_threshold",
-        help = "Datapath copy threshold. Copies everything below this threshold. If set to infinity, tries to use zero-copy for everything. If set to 0, uses zero-copy for nothing.",
+        help = "Datapath copy threshold. Copies everything below this threshold. If set to 0, tries to use zero-copy for everything. If set to infinity, uses zero-copy for nothing.",
         default_value = "256"
     )]
     pub copying_threshold: CopyingThreshold,

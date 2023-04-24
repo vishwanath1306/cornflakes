@@ -11,8 +11,11 @@ experiments/tmp.pdf
 mlx5-datapath/mlx5-wrapper/build/*
 ice-datapath/ice-wrapper/build/*
 ds-echo/c/server
-cf-kv/c/kv-sga-cornflakes-c
+cf-kv/c/kv-redis-c
 ds-echo/c/echo-dynamic-sga-c
+mlx5-datapath-c/mlx5_datapath_cpp.h
+mlx5-datapath-c/mlx5_datapath.h
+tapir/tapir_serialized_cpp.h
 
 experiments/main/__pycache__
 scatter-gather-bench/build/

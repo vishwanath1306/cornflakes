@@ -1,8 +1,13 @@
+use crate::{
+    dynamic_object_arena_hdr::CornflakesArenaObject, dynamic_object_hdr::CornflakesObject,
+};
+
 use super::{
     allocator::MempoolID, dynamic_rcsga_hybrid_hdr::HybridArenaRcSgaHdr,
     dynamic_sga_hdr::SgaHeaderRepr, utils::AddressInfo, ArenaDatapathSga, ArenaOrderedRcSga,
     ArenaOrderedSga, ConnID, CopyContext, MsgID, OrderedRcSga, OrderedSga, RcSga, Sga,
 };
+use byteorder::{ByteOrder, LittleEndian};
 use color_eyre::eyre::{bail, Result};
 use std::{io::Write, net::Ipv4Addr, str::FromStr, time::Duration};
 
@@ -51,6 +56,9 @@ pub enum PushBufType {
     Object,
     ArenaOrderedSga,
     Echo,
+    HybridObject,
+    HybridArenaObject,
+    HybridArenaSga,
 }
 
 impl FromStr for PushBufType {
@@ -69,6 +77,13 @@ impl FromStr for PushBufType {
             }
             "echo" | "ECHO" | "Echo" => Ok(PushBufType::Echo),
             "object" | "OBJECT" | "Object" => Ok(PushBufType::Object),
+            "hybridobject" | "HYBRIDOBJECT" | "HybridObject" => Ok(PushBufType::HybridObject),
+            "hybridarenaobject" | "HYBRIDARENAOBJECT" | "HybridArenaObject" => {
+                Ok(PushBufType::HybridArenaObject)
+            }
+            "hybridarenasga" | "HYBRIDARENASGA" | "HybridArenaSga" => {
+                Ok(PushBufType::HybridArenaSga)
+            }
             x => {
                 bail!("Unknown push buf type: {:?}", x);
             }
@@ -100,6 +115,15 @@ where
     pub fn data_len(&self) -> usize {
         let sum: usize = self.pkts.iter().map(|pkt| pkt.data_len()).sum();
         sum
+    }
+
+    pub fn is_noop(&self) -> bool {
+        // TODO: use magic number for NO-OP
+        if self.data_len() == super::NOOP_LEN {
+            let num = LittleEndian::read_u32(&self.pkts[0].as_ref()[0..4]);
+            return num == super::NOOP_MAGIC;
+        }
+        return false;
     }
 
     pub fn conn_id(&self) -> ConnID {
@@ -386,6 +410,31 @@ pub trait Datapath {
         unimplemented!();
     }
 
+    fn queue_cornflakes_hybrid_object(
+        &mut self,
+        _msg_id: MsgID,
+        _conn_id: ConnID,
+        _cornflakes_obj: impl CornflakesObject<Self>,
+        _end_batch: bool,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        unimplemented!();
+    }
+
+    fn queue_cornflakes_arena_object<'arena>(
+        &mut self,
+        _msg_id: MsgID,
+        _conn_id: ConnID,
+        _cornflakes_obj: impl CornflakesArenaObject<'arena, Self>,
+        _end_batch: bool,
+    ) -> Result<()>
+    where
+        Self: Sized,
+    {
+        unimplemented!();
+    }
     fn queue_cornflakes_obj<'arena>(
         &mut self,
         _msg_id: MsgID,
@@ -422,6 +471,22 @@ pub trait Datapath {
     fn queue_single_buffer_with_copy(
         &mut self,
         _buf: (MsgID, ConnID, &[u8]),
+        _end_batch: bool,
+    ) -> Result<()> {
+        unimplemented!();
+    }
+
+    fn prepare_single_buffer_with_udp_header(
+        &mut self,
+        _addr: (ConnID, MsgID),
+        _data_len: usize,
+    ) -> Result<Self::DatapathBuffer> {
+        unimplemented!();
+    }
+
+    fn transmit_single_datapath_buffer_with_header(
+        &mut self,
+        _buf: Box<Self::DatapathBuffer>,
         _end_batch: bool,
     ) -> Result<()> {
         unimplemented!();
@@ -542,9 +607,29 @@ pub trait Datapath {
     /// Checks whether pointer was allocated by our memory pool.
     fn is_registered(&self, buf: &[u8]) -> bool;
 
+    fn add_memory_pool_with_size(
+        &mut self,
+        size: usize,
+        num_registration_units: usize,
+        register_at_start: bool,
+    ) -> Result<Vec<MempoolID>> {
+        // TODO: somehow make this more configurable
+        let num_pages = 64;
+        let min_elts = num_pages * 2097152 / size;
+        self.add_memory_pool(size, min_elts, num_registration_units, register_at_start)
+    }
+
+    fn allocate_fallback_mempools(
+        &mut self,
+        _mempool_ids: &mut Vec<MempoolID>,
+        _num_registration_units: usize,
+        _register_at_start: bool,
+    ) -> Result<()> {
+        unimplemented!();
+    }
+
     /// Checks whether datapath has mempool of size size given (must be power of 2).
     fn has_mempool(&self, size: usize) -> bool;
-
     fn header_size(&self) -> usize;
 
     /// Number of cycles in a second
@@ -583,7 +668,7 @@ pub trait Datapath {
 
     /// Maximum possible packet size
     fn max_packet_size() -> usize {
-        8192
+        9216
     }
 
     fn initialize_zero_copy_cache_thread(&self) {

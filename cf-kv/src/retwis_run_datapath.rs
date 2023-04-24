@@ -103,7 +103,7 @@ macro_rules! run_client_retwis(
 
                 kv_client.init(&mut connection)?;
 
-                cornflakes_libos::state_machine::client::run_client_loadgen(i, &mut kv_client, &mut connection, opt_clone.retries, opt_clone.total_time as _, opt_clone.logfile.clone(), opt_clone.rate as _, size as _, schedule, opt_clone.num_threads as _)
+                cornflakes_libos::state_machine::client::run_client_loadgen(i, opt_clone.num_threads as _, opt_clone.client_id as _, opt_clone.num_clients as _, &mut kv_client, &mut connection, opt_clone.retries, opt_clone.total_time as _, opt_clone.logfile.clone(), opt_clone.rate as _, size as _, schedule, opt_clone.ready_file.clone())
             }));
         }
 
@@ -189,7 +189,7 @@ pub struct RetwisOpt {
     pub inline_mode: InlineMode,
     #[structopt(
         long = "copy_threshold",
-        help = "Datapath copy threshold. Copies everything below this threshold. If set to infinity, tries to use zero-copy for everything. If set to 0, uses zero-copy for nothing.",
+        help = "Datapath copy threshold. Copies everything below this threshold. If set to 0, tries to use zero-copy for everything. If set to infinity, uses zero-copy for nothing.",
         default_value = "256"
     )]
     pub copying_threshold: usize,

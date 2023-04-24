@@ -7,8 +7,6 @@ use hashbrown::HashMap;
 use std::collections::HashSet;
 pub type MempoolID = u32;
 pub fn align_to_pow2(x: usize) -> usize {
-    #[cfg(feature = "profiler")]
-    demikernel::timer!("align to pow2");
     if x & (x - 1) == 0 {
         return x + (x == 0) as usize;
     }
@@ -238,13 +236,21 @@ where
                         Some(x) => {
                             return Ok(Some(x));
                         }
-                        None => {}
+                        None => {
+                            /*tracing::debug!(
+                                considering =? mempools,
+                                "Mempool {} didn't have any buffers (size {})",
+                                *mempool_id,
+                                align_size
+                            );*/
+                        }
                     }
                 }
+                tracing::info!("None of the mempools of size {} had elts", align_size);
                 return Ok(None);
             }
             None => {
-                tracing::debug!("Returning none");
+                tracing::info!("Returning none; no mempools of size {} at all", align_size);
                 return Ok(None);
             }
         }
@@ -301,5 +307,12 @@ where
     #[inline]
     pub fn has_mempool(&self, size: usize) -> bool {
         return self.mempool_ids.contains_key(&size);
+    }
+
+    #[inline]
+    pub fn get_cur_sizes(&self) -> Vec<usize> {
+        // return list of sizes currently that can be allocated
+        let sizes = self.mempool_ids.iter().map(|(k, _)| *k).collect();
+        sizes
     }
 }

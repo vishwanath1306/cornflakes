@@ -11,6 +11,8 @@ use std::{
 fn main() {
     println!("cargo:rerun-if-changed=src/cornflakes_dynamic/kv.proto");
     println!("cargo:rerun-if-changed=src/cornflakes_dynamic/kv_hybrid.proto");
+    println!("cargo:rerun-if-changed=src/cornflakes_dynamic/kv_hybrid_arena_object.proto");
+    println!("cargo:rerun-if-changed=src/cornflakes_dynamic/kv_hybrid_object.proto");
     println!("cargo:rerun-if-changed=src/flatbuffers/cf_kv_fb.fbs");
     println!("cargo:rerun-if-changed=src/capnproto/cf_kv.capnp");
     println!("cargo:rerun-if-changed=src/protobuf/kv.proto");
@@ -45,7 +47,6 @@ fn main() {
     }
 
     let input_cf_file_sga_hybrid = input_cf_path.clone().join("kv_hybrid.proto");
-    // with ref counting hybrid
     println!("{:?}", out_dir);
     match compile(
         input_cf_file_sga_hybrid.as_path().to_str().unwrap(),
@@ -70,16 +71,46 @@ fn main() {
         }
     }
 
-    let input_cf_file_c = input_cf_path.clone().join("kv_nonrefcounted_c.proto");
+    let input_cf_file_c = input_cf_path.clone().join("kv_c.proto");
     let out_dir_c_path = Path::new(&cargo_manifest_dir).join("c");
     match compile(
         input_cf_file_c.as_path().to_str().unwrap(),
         &out_dir_c_path.into_os_string().into_string().unwrap(),
-        CompileOptions::new(HeaderType::HybridRcSga, Language::C),
+        CompileOptions::new(HeaderType::HybridArenaObject, Language::C),
     ) {
         Ok(_) => {}
         Err(e) => {
             panic!("Cornflakes dynamic sga failed: {:?}", e);
+        }
+    }
+
+    // new version of hybrid object
+    let input_cf_file_hybrid_object = input_cf_path.clone().join("kv_hybrid_object.proto");
+    match compile(
+        input_cf_file_hybrid_object.as_path().to_str().unwrap(),
+        &out_dir,
+        CompileOptions::new(HeaderType::HybridObject, Language::Rust),
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            panic!("Cornflakes hybrid object failed: {:?}", e);
+        }
+    }
+
+    // new version of hybrid object with arena
+    let input_cf_file_hybrid_arena_object =
+        input_cf_path.clone().join("kv_hybrid_arena_object.proto");
+    match compile(
+        input_cf_file_hybrid_arena_object
+            .as_path()
+            .to_str()
+            .unwrap(),
+        &out_dir,
+        CompileOptions::new(HeaderType::HybridArenaObject, Language::Rust),
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            panic!("Cornflakes hybrid object failed: {:?}", e);
         }
     }
 

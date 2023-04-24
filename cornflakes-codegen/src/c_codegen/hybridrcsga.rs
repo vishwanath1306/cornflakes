@@ -410,7 +410,7 @@ fn add_copy_context_functions(compiler: &mut SerializationCompiler, datapath: &s
     Ok(())
 }
 
-fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -> Result<()> {
+pub fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -> Result<()> {
     let args = vec![
         FunctionArg::CArg(CArgInfo::arg("conn", "*mut ::std::os::raw::c_void")),
         FunctionArg::CArg(CArgInfo::arg("trace_file", "*const ::std::os::raw::c_char")),
@@ -425,6 +425,7 @@ fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -
         FunctionArg::CArg(CArgInfo::arg("min_mempool_size", "usize")),
         FunctionArg::CArg(CArgInfo::arg("num_registrations", "usize")),
         FunctionArg::CArg(CArgInfo::arg("register_at_start", "usize")),
+        FunctionArg::CArg(CArgInfo::arg("use_linked_list", "bool")),
     ];
     let func_context =
         FunctionContext::new_extern_c(&format!("{}_load_ycsb_db", datapath), true, args, true);
@@ -445,7 +446,7 @@ fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -
         cf_kv::NUM_REGISTRATIONS = num_registrations;
         cf_kv::REGISTER_AT_START = (register_at_start == 1);
     }
-    let load_generator = cf_kv::ycsb::YCSBServerLoader::new(value_size_generator, num_values, num_keys, false);
+    let load_generator = cf_kv::ycsb::YCSBServerLoader::new(value_size_generator, num_values, num_keys, false, use_linked_list);
     let (kv, list_kv, _, _) = load_generator.new_kv_state(file_str, conn_box.as_mut(), false).unwrap();
     let boxed_kv = Box::new(kv);
     let boxed_list_kv = Box::new(list_kv);
@@ -723,7 +724,10 @@ fn add_db_load_functions(compiler: &mut SerializationCompiler, datapath: &str) -
     Ok(())
 }
 
-fn add_received_pkt_functions(compiler: &mut SerializationCompiler, datapath: &str) -> Result<()> {
+pub fn add_received_pkt_functions(
+    compiler: &mut SerializationCompiler,
+    datapath: &str,
+) -> Result<()> {
     ////////////////////////////////////////////////////////////////////////////
     // ReceivedPkt_msg_type
     let args = vec![
@@ -781,6 +785,9 @@ fn add_received_pkt_functions(compiler: &mut SerializationCompiler, datapath: &s
             unimplemented!();
         }
         MsgType::GetTimeline(_s) => {
+            unimplemented!();
+        }
+        MsgType::GetFromList => {
             unimplemented!();
         }
     }",
@@ -910,7 +917,7 @@ fn add_cornflakes_structs(
 }
 
 /// Returns whether the message has a field of type CFString.
-fn has_cf_string(msg_info: &MessageInfo) -> bool {
+pub fn has_cf_string(msg_info: &MessageInfo) -> bool {
     for field in msg_info.get_fields().iter() {
         match &field.typ {
             FieldType::String | FieldType::RefCountedString => {
@@ -923,7 +930,7 @@ fn has_cf_string(msg_info: &MessageInfo) -> bool {
 }
 
 /// Returns whether the message has a field of type CFBytes.
-fn has_cf_bytes(msg_info: &MessageInfo) -> bool {
+pub fn has_cf_bytes(msg_info: &MessageInfo) -> bool {
     for field in msg_info.get_fields().iter() {
         match &field.typ {
             FieldType::Bytes | FieldType::RefCountedBytes => {
@@ -937,7 +944,7 @@ fn has_cf_bytes(msg_info: &MessageInfo) -> bool {
 
 /// If the message has field(s) of type VariableList<T>, returns the type(s)
 /// that parameterize the VariableList.
-fn has_variable_list(
+pub fn has_variable_list(
     fd: &ProtoReprInfo,
     msg_info: &MessageInfo,
     datapath: &str,

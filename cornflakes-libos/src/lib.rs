@@ -7,6 +7,8 @@
 //!  3. A DPDK based datapath.
 pub mod allocator;
 pub mod datapath;
+pub mod dynamic_object_arena_hdr;
+pub mod dynamic_object_hdr;
 pub mod dynamic_rcsga_hdr;
 pub mod dynamic_rcsga_hybrid_hdr;
 pub mod dynamic_sga_hdr;
@@ -35,19 +37,29 @@ use std::{
 use timing::HistogramWrapper;
 use utils::AddressInfo;
 #[cfg(feature = "profiler")]
-const PROFILER_DEPTH: usize = 10;
+const PROFILER_DEPTH: usize = 2;
 
 pub static mut USING_REF_COUNTING: bool = true;
 
 pub type MsgID = u32;
 pub type ConnID = usize;
 
+pub static NOOP_MAGIC: u32 = 0x6e626368; // 'nbch'
+pub static NOOP_LEN: usize = 16;
 pub static MAX_SCATTER_GATHER_ENTRIES: usize = 32;
 
 pub fn turn_off_ref_counting() {
     unsafe {
         USING_REF_COUNTING = false;
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
+pub struct SerializationInfo {
+    pub header_size: usize,
+    pub num_zero_copy_entries: usize,
+    pub copy_length: usize,
+    pub zero_copy_length: usize,
 }
 
 struct MutForwardPointer<'a>(&'a mut [u8], usize);
@@ -2074,8 +2086,6 @@ where
 
     #[inline]
     pub fn new(arena: &'a bumpalo::Bump, datapath: &mut D) -> Result<Self> {
-        #[cfg(feature = "profiler")]
-        demikernel::timer!("Allocate new copy context");
         Ok(CopyContext {
             copy_buffers: bumpalo::collections::Vec::with_capacity_in(1, arena),
             threshold: datapath.get_copying_threshold(),
@@ -2116,18 +2126,22 @@ where
     /// Returns (start, end) range of copy context that buffer was copied into.
     #[inline]
     pub fn copy(&mut self, buf: &[u8], datapath: &mut D) -> Result<CopyContextRef<D>> {
-        #[cfg(feature = "profiler")]
-        demikernel::timer!("Copy in copy context");
+        //#[cfg(feature = "profiler")]
+        //demikernel::timer!("Copy in copy context");
 
         let current_length = self.current_length;
         // TODO: doesn't work if buffer is > than an MTU
-        if self.remaining < buf.len() {
+        if self.remaining <= buf.len() {
             self.push(datapath)?;
         }
         let copy_buffers_len = self.copy_buffers.len();
         let last_buf = &mut self.copy_buffers[copy_buffers_len - 1];
         let current_offset = last_buf.len();
-        let written = last_buf.write(buf)?;
+        let written = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("Actual copy");
+            last_buf.write(buf)?
+        };
         if written != buf.len() {
             bail!(
                 "Failed to write entire buf len into copy buffer, only wrote: {:?}",
@@ -3367,7 +3381,7 @@ pub trait ClientSM {
             // Send the next message
             datapath.push_buf(msg, addr_info.clone())?;
 
-            spin_timer.wait(&mut || {
+            spin_timer.wait(&mut |_warmup_done: bool| {
                 let recved_pkts = datapath.pop()?;
                 for (pkt, rtt) in recved_pkts.into_iter() {
                     let msg_id = pkt.get_id();
