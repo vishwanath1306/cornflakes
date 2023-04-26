@@ -90,10 +90,51 @@ where
 
         // construct response
         let mut response = builder.init_root::<kv_capnp::get_resp::Builder>();
+        response.set_id(get_request.get_id());
         response.set_val(value.as_ref());
         Ok(())
     }
 
+    fn handle_get_from_list<T>(
+        &mut self,
+        list_kv_server: &ListKVServer<D>,
+        pkt: &ReceivedPkt<D>,
+        builder: &mut Builder<T>,
+    ) -> Result<()>
+    where
+        T: Allocator,
+    {
+        let segment_array_vec = read_context(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])?;
+        let segment_array = SegmentArray::new(&segment_array_vec.as_slice());
+        let message_reader = Reader::new(segment_array, ReaderOptions::default());
+        let get_request = message_reader
+            .get_root::<kv_capnp::get_from_list_req::Reader>()
+            .wrap_err("Failed to deserialize GetFromListReq.")?;
+        tracing::debug!("Received get request for key: {:?}", get_request.get_key());
+        let key = get_request.get_key()?;
+        let value = match list_kv_server.get(key) {
+            Some(list) => match list.get(get_request.get_idx() as usize) {
+                Some(v) => v,
+                None => {
+                    bail!(
+                        "Could not find idx {} for key {} in list kv server",
+                        get_request.get_idx(),
+                        key
+                    );
+                }
+            },
+            None => {
+                bail!("Could not find value for key: {:?}", key);
+            }
+        };
+        tracing::debug!("Value len: {:?}", value.as_ref().len());
+
+        // construct response
+        let mut response = builder.init_root::<kv_capnp::get_resp::Builder>();
+        response.set_id(get_request.get_id());
+        response.set_val(value.as_ref());
+        Ok(())
+    }
     fn handle_put<T>(
         &self,
         kv_server: &mut KVServer<D>,
@@ -144,7 +185,8 @@ where
             .wrap_err("Failed to deserialize GetMReq.")?;
         let keys = getm_request.get_keys()?;
 
-        let response = builder.init_root::<kv_capnp::get_m_resp::Builder>();
+        let mut response = builder.init_root::<kv_capnp::get_m_resp::Builder>();
+        response.set_id(getm_request.get_id());
         let mut list = response.init_vals(keys.len());
         for (i, key_res) in keys.iter().enumerate() {
             let key = key_res?;
@@ -212,22 +254,36 @@ where
     where
         T: Allocator,
     {
-        let segment_array_vec = read_context(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])?;
+        let segment_array_vec = {
+            #[cfg(feature = "read context")]
+            demikernel::timer!("deserialize");
+            read_context(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])?
+        };
         let segment_array = SegmentArray::new(&segment_array_vec.as_slice());
         let message_reader = Reader::new(segment_array, ReaderOptions::default());
-        let getlist_request = message_reader
-            .get_root::<kv_capnp::get_list_req::Reader>()
-            .wrap_err("Failed to deserialize GetList.")?;
+        let getlist_request = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("deserialize");
+
+            message_reader
+                .get_root::<kv_capnp::get_list_req::Reader>()
+                .wrap_err("Failed to deserialize GetList.")?
+        };
         tracing::debug!(
             "Received get list request for key: {:?}",
             getlist_request.get_key()
         );
         let key = getlist_request.get_key()?;
-        let response = builder.init_root::<kv_capnp::get_list_resp::Builder>();
+        let mut response = builder.init_root::<kv_capnp::get_list_resp::Builder>();
+        response.set_id(getlist_request.get_id());
         if self.use_linked_list() {
             let range_start = getlist_request.get_rangestart();
             let range_end = getlist_request.get_rangeend();
-            let mut node_option = linked_list_kv.get(key);
+            let mut node_option = {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("do get on key");
+                linked_list_kv.get(key)
+            };
             let range_len = {
                 // TODO: range parsing is buggy?
                 if range_end == -1 || range_end == 0 {
@@ -246,7 +302,11 @@ where
                 }
             };
             let mut list = response.init_vals(range_len as _);
-            let mut node_option = linked_list_kv.get(key);
+            let mut node_option = {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("do get on key 2nd time");
+                linked_list_kv.get(key)
+            };
 
             let mut idx: i32 = 0;
             while let Some(node) = node_option {
@@ -258,7 +318,11 @@ where
                 if idx == range_len as i32 {
                     break;
                 }
-                list.set((idx - range_start) as u32, node.get_data());
+                {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("append node to list");
+                    list.set((idx - range_start) as u32, node.get_data())
+                };
                 node_option = node.get_next();
                 idx += 1;
             }
@@ -388,6 +452,13 @@ where
                         &mut builder,
                     )?;
                 }
+                MsgType::GetFromList => {
+                    self.serializer.handle_get_from_list(
+                        &self.list_kv_server,
+                        &pkt,
+                        &mut builder,
+                    )?;
+                }
                 MsgType::GetM(_size) => {
                     self.serializer.handle_getm(
                         &self.kv_server,
@@ -397,6 +468,8 @@ where
                     )?;
                 }
                 MsgType::GetList(_size) => {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("handle getlist capnproto");
                     self.serializer.handle_getlist(
                         &self.list_kv_server,
                         &self.linked_list_kv_server,
@@ -567,20 +640,31 @@ where
                     unimplemented!();
                 }
             }
-
-            let mut framing_vec = bumpalo::collections::Vec::with_capacity_zeroed_in(
-                FRAMING_ENTRY_SIZE * (1 + builder.get_segments_for_output().len()),
-                &self.arena,
-            );
-            let mut sga =
-                ArenaOrderedSga::allocate(builder.get_segments_for_output().len() + 1, &self.arena);
-            fill_in_context(&builder, &mut framing_vec);
-            sga.add_entry(Sge::new(framing_vec.as_slice()));
-            for seg in builder.get_segments_for_output().iter() {
-                sga.add_entry(Sge::new(&seg));
+            {
+                #[cfg(feature = "profiler")]
+                demikernel::timer!("write framing and construct sga");
+                let mut framing_vec = bumpalo::collections::Vec::with_capacity_zeroed_in(
+                    FRAMING_ENTRY_SIZE * (1 + builder.get_segments_for_output().len()),
+                    &self.arena,
+                );
+                let mut outgoing_sga = ArenaOrderedSga::allocate(
+                    builder.get_segments_for_output().len() + 1,
+                    &self.arena,
+                );
+                fill_in_context(&builder, &mut framing_vec);
+                outgoing_sga.add_entry(Sge::new(framing_vec.as_slice()));
+                for seg in builder.get_segments_for_output().iter() {
+                    outgoing_sga.add_entry(Sge::new(&seg));
+                }
+                {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("queue sga with copy");
+                    datapath.queue_sga_with_copy(
+                        (pkt.msg_id(), pkt.conn_id(), &outgoing_sga),
+                        i == (pkts_len - 1),
+                    )?;
+                }
             }
-            datapath
-                .queue_sga_with_copy((pkt.msg_id(), pkt.conn_id(), &sga), i == (pkts_len - 1))?;
         }
         self.arena.reset();
         Ok(())
@@ -784,6 +868,27 @@ where
         let mut builder = Builder::new_default();
         let mut get_req = builder.init_root::<kv_capnp::get_req::Builder>();
         get_req.set_key(&key);
+        let framing_size = fill_in_context_without_arena(&builder, buf)?;
+        let full_size = copy_into_buf(buf, framing_size, &builder)?;
+        tracing::debug!(
+            "Full buffer: {:?}, full buffer length: {}",
+            &buf[0..full_size],
+            full_size
+        );
+        return Ok(full_size);
+    }
+
+    fn serialize_get_from_list(
+        &self,
+        buf: &mut [u8],
+        key: &str,
+        idx: usize,
+        _datapath: &D,
+    ) -> Result<usize> {
+        let mut builder = Builder::new_default();
+        let mut get_req = builder.init_root::<kv_capnp::get_from_list_req::Builder>();
+        get_req.set_key(&key);
+        get_req.set_idx(idx as u32);
         let framing_size = fill_in_context_without_arena(&builder, buf)?;
         let full_size = copy_into_buf(buf, framing_size, &builder)?;
         tracing::debug!(

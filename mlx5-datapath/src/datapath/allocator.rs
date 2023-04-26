@@ -72,7 +72,7 @@ impl DataMempool {
         use_atomic_ops: bool,
         register_at_alloc: bool,
     ) -> Result<Self> {
-        println!("Allocating mempool with params: {:?}", mempool_params);
+        //println!("Allocating mempool with params: {:?}", mempool_params);
         let mempool_box = vec![0u8; unsafe { custom_mlx5_get_custom_mlx5_mempool_size() } as _]
             .into_boxed_slice();
         let atomic_ops: u32 = match use_atomic_ops {

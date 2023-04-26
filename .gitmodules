@@ -16,4 +16,7 @@
 	url = https://github.com/DPDK/dpdk.git
 [submodule "redis"]
 	path = redis
-	url = https://github.com/vishwanath1306/redis.git
+	url = https://github.com/deeptir18/redis-0cc.git
+[submodule "tapir/c/tapir-cf"]
+	path = tapir/c/tapir-cf
+	url = https://github.com/ShreyaRavi/tapir-cf.git

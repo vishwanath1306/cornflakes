@@ -1,9 +1,15 @@
 syntax = "proto3";
-package kv_sga_cornflakes;
+package kv_redis;
 
 message GetReq {
     uint32 id = 1;
     string key = 2;
+}
+
+message GetFromListReq {
+    uint32 id = 1;
+    string key = 2;
+    uint32 idx = 3;
 }
 
 message GetMReq {
@@ -32,4 +38,15 @@ message GetListResp {
     uint32 id = 1;
     repeated bytes val_list = 2;
 }
+
+message PutReq {
+    uint32 id = 1;
+    string key = 2;
+    bytes val = 3;
+}
+
+message PutResp {
+    uint32 id = 1;
+}
+
 

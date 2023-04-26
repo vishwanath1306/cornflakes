@@ -126,6 +126,7 @@ impl YCSBLine {
         num_keys: usize,
         num_values: usize,
         value_size: usize,
+        use_linked_list: bool,
     ) -> Result<YCSBLine> {
         let mut split: std::str::Split<&str> = line.split(" ");
         let _ = match &split.next().unwrap().parse::<usize>() {
@@ -149,7 +150,7 @@ impl YCSBLine {
                 let mut msg_type = MsgType::Get;
                 if num_values > 1 && num_keys == num_values {
                     msg_type = MsgType::GetM(num_values as u16);
-                } else if num_values > 1 && num_keys == 1 {
+                } else if num_values > 1 && num_keys == 1 || use_linked_list {
                     msg_type = MsgType::GetList(num_values as u16);
                 }
                 Ok(YCSBLine {
@@ -163,6 +164,10 @@ impl YCSBLine {
                 if num_values > 1 && num_keys == num_values {
                     msg_type = MsgType::PutM(num_values as u16);
                 } else if num_values > 1 && num_keys == 1 {
+                    msg_type = MsgType::PutList(num_values as u16);
+                }
+
+                if use_linked_list {
                     msg_type = MsgType::PutList(num_values as u16);
                 }
                 let val = &split.next().unwrap();
@@ -200,6 +205,7 @@ pub struct YCSBServerLoader {
     num_values: usize,
     num_keys: usize,
     allocate_contiguously: bool,
+    use_linked_list: bool,
 }
 
 impl YCSBServerLoader {
@@ -208,12 +214,14 @@ impl YCSBServerLoader {
         num_values: usize,
         num_keys: usize,
         allocate_contiguously: bool,
+        use_linked_list: bool,
     ) -> Self {
         YCSBServerLoader {
             value_size: value_size,
             num_values: num_values,
             num_keys: num_keys,
             allocate_contiguously: allocate_contiguously,
+            use_linked_list: use_linked_list,
         }
     }
 
@@ -240,7 +248,7 @@ impl YCSBServerLoader {
                 let mut datapath_buffer =
                     allocate_datapath_buffer(datapath, value.len(), mempool_ids)?;
                 let _ = datapath_buffer.write(value.as_bytes())?;
-                if use_linked_list_kv_server {
+                if use_linked_list_kv_server || self.use_linked_list {
                     linked_list_kv_server.insert(key.to_string(), datapath_buffer);
                 } else {
                     kv_server.insert(key.to_string(), datapath_buffer);
@@ -261,7 +269,7 @@ impl YCSBServerLoader {
                 let mut datapath_buffer =
                     allocate_datapath_buffer(datapath, value.len(), mempool_ids)?;
                 let _ = datapath_buffer.write(value.as_bytes())?;
-                if use_linked_list_kv_server {
+                if use_linked_list_kv_server || self.use_linked_list {
                     linked_list_kv_server.insert(key.to_string(), datapath_buffer);
                 } else {
                     kv_server.insert(key.to_string(), datapath_buffer);
@@ -281,7 +289,7 @@ impl YCSBServerLoader {
                 let mut datapath_buffer =
                     allocate_datapath_buffer(datapath, value.len(), mempool_ids)?;
                 let _ = datapath_buffer.write(value.as_bytes())?;
-                if use_linked_list_kv_server {
+                if use_linked_list_kv_server || self.use_linked_list {
                     linked_list_kv_server.insert(key.to_string(), datapath_buffer);
                 } else {
                     if list_kv_server.contains_key(key) {
@@ -307,7 +315,13 @@ impl ServerLoadGenerator for YCSBServerLoader {
 
     fn read_request(&self, line: &str) -> Result<Self::RequestLine> {
         let value_size = self.value_size.sample();
-        YCSBLine::new(line, self.num_keys, self.num_values, value_size)
+        YCSBLine::new(
+            line,
+            self.num_keys,
+            self.num_values,
+            value_size,
+            self.use_linked_list,
+        )
     }
 
     fn modify_server_state_ref_kv(
@@ -374,6 +388,7 @@ impl ServerLoadGenerator for YCSBServerLoader {
     where
         D: Datapath,
     {
+        tracing::info!(num_values = self.num_values);
         if !self.allocate_contiguously {
             for i in 0..self.num_values {
                 let file = File::open(request_file)?;
@@ -482,6 +497,7 @@ pub struct YCSBClient {
     value_size: YCSBValueSizeGenerator,
     num_values: usize,
     num_keys: usize,
+    use_linked_list: bool,
 }
 
 impl YCSBClient {
@@ -494,6 +510,7 @@ impl YCSBClient {
         value_size_generator: YCSBValueSizeGenerator,
         num_keys: usize,
         num_values: usize,
+        use_linked_list: bool,
     ) -> Result<Self>
     where
         Self: Sized,
@@ -512,6 +529,7 @@ impl YCSBClient {
             value_size: value_size_generator,
             num_keys: num_keys,
             num_values: num_values,
+            use_linked_list: use_linked_list,
         })
     }
 
@@ -690,6 +708,7 @@ impl YCSBClient {
             self.num_keys,
             self.num_values,
             self.value_size.sample(),
+            self.use_linked_list,
         )
     }
 }
@@ -721,6 +740,7 @@ impl RequestGenerator for YCSBClient {
             value_size: YCSBValueSizeGenerator::SingleValue(DEFAULT_VALUE_SIZE),
             num_keys: DEFAULT_NUM_KEYS,
             num_values: DEFAULT_NUM_VALUES,
+            use_linked_list: false,
         })
     }
 

@@ -1,0 +1,150 @@
+syntax = "proto3";
+
+package tapir_cf;
+
+message Request {
+    bytes op = 1;
+    uint64 clientid = 2;
+    uint64 clientreqid = 3;
+}
+
+message UnloggedRequest {
+    bytes op = 1;
+    uint64 clientid = 2;
+    uint64 clientreqid = 3;
+}
+
+message OpID {
+    uint64 clientid = 1;
+    uint64 clientreqid = 2;
+}
+
+// For the view change and recovery protocol, a replica stores two things on
+// disk: (1) its current view and (2) the latest view during which it was
+// NORMAL. Replicas pack this information into this proto buf and serialize it
+// to disk.
+message PersistedViewInfo {
+    uint64 view = 1;
+    uint64 latest_normal_view = 2;
+}
+
+message RecordEntryProto {
+    uint64 view = 1;
+    OpID opid = 2;
+    uint32 state = 3;
+    uint32 record_type = 4;
+    bytes op = 5;
+    bytes result = 6;
+}
+
+// TODO: Currently, replicas send entire records to one another. Figure out if
+// there is a more efficient way to exchange records.
+message RecordProto {
+    RecordEntryProto entry = 1;
+}
+
+message ProposeInconsistentMessage {
+    Request req = 1;
+}
+
+message Reply {
+    TapirReply result = 1;
+}
+
+message ReplyInconsistentMessage {
+    uint64 view = 1;
+    uint32 replicaIdx = 2;
+    OpID opid = 3;
+    uint32 finalized = 4;
+}
+
+message FinalizeInconsistentMessage {
+    OpID opid = 1;
+}
+
+message ConfirmMessage {
+    uint64 view = 1;
+    uint32 replicaIdx = 2;
+    OpID opid = 3;
+}
+
+message ProposeConsensusMessage {
+    Request req = 1;
+}
+
+message ReplyConsensusMessage {
+    uint64 view = 1;
+    uint32 replicaIdx = 2;
+    OpID opid = 3;
+    Reply result = 4;
+    uint32 finalized = 5;
+}
+
+message FinalizeConsensusMessage {
+    OpID opid = 1;
+    bytes result = 2;
+}
+
+message UnloggedRequestMessage {
+    UnloggedRequest req = 1;
+}
+
+message UnloggedReplyMessage {
+    Reply reply = 1;
+    uint64 clientreqid = 2;
+}
+
+message TimestampMessage {
+    uint64 id = 1;
+    uint64 timestamp = 2;
+}
+
+message ReadMessage {
+    string key = 1;
+    TimestampMessage readtime = 2;
+}
+
+message WriteMessage {
+    string key = 1;
+    string value = 2;
+}
+
+// A serialized transaction
+message TransactionMessage {
+    repeated ReadMessage readset = 1;
+    repeated WriteMessage writeset = 2;
+}
+
+message GetMessage {
+    string key = 1;
+    TimestampMessage timestamp = 2;
+}
+
+message PrepareMessage {
+    TransactionMessage txn = 1;
+    TimestampMessage timestamp = 2;
+}
+
+message CommitMessage {
+    uint64 timestamp = 1;
+}
+
+message AbortMessage {
+    TransactionMessage txn = 1;
+}
+
+message TapirRequest {
+    uint32 op = 1;
+    uint64 txnid = 2;
+    GetMessage get = 3;
+    PrepareMessage prepare = 4;
+    CommitMessage commit = 5;
+    AbortMessage abort = 6;
+}
+
+message TapirReply {
+    int32 status = 1;
+    string value = 2;
+    TimestampMessage timestamp = 3;
+}
+

@@ -51,31 +51,92 @@ where
         linked_list_kv_server: &LinkedListKVServer<D>,
         pkt: &ReceivedPkt<D>,
     ) -> Result<kv_messages::GetResp> {
-        let get_request =
+        let get_request = {
+            //#[cfg(feature = "profiler")]
+            //demikernel::timer!("Protobuf deserialize");
             kv_messages::GetReq::parse_from_bytes(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])
-                .wrap_err("Failed to deserialize proto GetReq")?;
-        let value = match self.use_linked_list {
-            true => match linked_list_kv_server.get(&get_request.key) {
-                Some(v) => v.as_ref().as_ref(),
-                None => {
-                    bail!(
-                        "Cannot find value for key in KV store: {:?}",
-                        get_request.key
-                    );
-                }
-            },
-            false => match kv_server.get(&get_request.key) {
-                Some(v) => v.as_ref(),
-                None => {
-                    bail!(
-                        "Cannot find value for key in KV store: {:?}",
-                        get_request.key
-                    );
-                }
-            },
+                .wrap_err("Failed to deserialize proto GetReq")?
+        };
+        let value = {
+            //#[cfg(feature = "profiler")]
+            //demikernel::timer!("Get value from map");
+            match self.use_linked_list {
+                true => match linked_list_kv_server.get(&get_request.key) {
+                    Some(v) => v.as_ref().as_ref(),
+                    None => {
+                        bail!(
+                            "Cannot find value for key in KV store: {:?}",
+                            get_request.key
+                        );
+                    }
+                },
+                false => match kv_server.get(&get_request.key) {
+                    Some(v) => v.as_ref(),
+                    None => {
+                        bail!(
+                            "Cannot find value for key in KV store: {:?}",
+                            get_request.key
+                        );
+                    }
+                },
+            }
         };
         let mut get_resp = kv_messages::GetResp::new();
-        get_resp.val = value.to_vec();
+        get_resp.id = get_request.id;
+        tracing::debug!(
+            "found value {:?} with length {}",
+            value.as_ref().as_ptr(),
+            value.as_ref().len()
+        );
+        {
+            //#[cfg(feature = "profiler")]
+            //demikernel::timer!("Protobuf set value");
+            get_resp.val = value.to_vec();
+        }
+        Ok(get_resp)
+    }
+
+    fn handle_get_from_list(
+        &self,
+        list_kv_server: &ListKVServer<D>,
+        pkt: &ReceivedPkt<D>,
+    ) -> Result<kv_messages::GetResp> {
+        let get_request = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("Deserialize pkt");
+            kv_messages::GetFromListReq::parse_from_bytes(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])
+                .wrap_err("Failed to deserialzie Proto GetFromList Req")?
+        };
+        let mut get_resp = kv_messages::GetResp::new();
+        get_resp.id = get_request.id;
+
+        let value = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("Retrieve value");
+            match list_kv_server.get(&get_request.key) {
+                Some(list) => match list.get(get_request.idx as usize) {
+                    Some(v) => v,
+                    None => {
+                        bail!(
+                            "Could not find value index {} for key {} in KVStore",
+                            get_request.idx,
+                            get_request.key
+                        );
+                    }
+                },
+                None => {
+                    bail!(
+                        "Cannot find value for key in KV store: {:?}",
+                        get_request.key,
+                    );
+                }
+            }
+        };
+        {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("Set value get hybrid arena");
+            get_resp.val = value.as_ref().to_vec();
+        }
         Ok(get_resp)
     }
 
@@ -137,6 +198,7 @@ where
             }
         }
         let mut getm_resp = kv_messages::GetMResp::new();
+        getm_resp.id = getm_request.id;
         getm_resp.vals = vals;
         Ok(getm_resp)
     }
@@ -165,14 +227,21 @@ where
         linked_list_kv_server: &LinkedListKVServer<D>,
         pkt: &ReceivedPkt<D>,
     ) -> Result<kv_messages::GetListResp> {
-        let getlist_request =
+        let getlist_request = {
+            #[cfg(feature = "profiler")]
+            demikernel::timer!("deserialize");
             kv_messages::GetListReq::parse_from_bytes(&pkt.seg(0).as_ref()[REQ_TYPE_SIZE..])
-                .wrap_err("Failed to deserialize proto GetListReq")?;
+                .wrap_err("Failed to deserialize proto GetListReq")?
+        };
         let values_list = match self.use_linked_list() {
             true => {
                 let range_start = getlist_request.range_start;
                 let range_end = getlist_request.range_end;
-                let mut node_option = linked_list_kv_server.get(&getlist_request.key.as_str());
+                let mut node_option = {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("do get on key");
+                    linked_list_kv_server.get(&getlist_request.key.as_str())
+                };
 
                 // todo: again, why is range_end being parsed buggy?
                 let range_len = {
@@ -192,7 +261,11 @@ where
                     }
                 };
 
-                let mut node_option = linked_list_kv_server.get(&getlist_request.key.as_str());
+                let mut node_option = {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("do get on key 2nd time");
+                    linked_list_kv_server.get(&getlist_request.key.as_str())
+                };
                 let mut list: Vec<Vec<u8>> = Vec::with_capacity(range_len);
                 let mut idx = 0;
                 while let Some(node) = node_option {
@@ -203,8 +276,11 @@ where
                     } else if idx as usize == range_len {
                         break;
                     }
-
-                    list.push(node.as_ref().get_data().to_vec());
+                    {
+                        #[cfg(feature = "profiler")]
+                        demikernel::timer!("append node to list");
+                        list.push(node.as_ref().get_data().to_vec());
+                    }
                     node_option = node.get_next();
                     idx += 1;
                 }
@@ -316,11 +392,22 @@ where
             let message_type = MsgType::from_packet(&pkt)?;
             match message_type {
                 MsgType::Get => {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("handle get and queue protobuf");
                     let response = self.serializer.handle_get(
                         &self.kv_server,
                         &self.linked_list_kv_server,
                         &pkt,
                     )?;
+                    datapath.queue_protobuf_message(
+                        (pkt.msg_id(), pkt.conn_id(), &response),
+                        i == (pkts_len - 1),
+                    )?;
+                }
+                MsgType::GetFromList => {
+                    let response = self
+                        .serializer
+                        .handle_get_from_list(&self.list_kv_server, &pkt)?;
                     datapath.queue_protobuf_message(
                         (pkt.msg_id(), pkt.conn_id(), &response),
                         i == (pkts_len - 1),
@@ -338,6 +425,8 @@ where
                     )?;
                 }
                 MsgType::GetList(_size) => {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("handle getlist and queue protobuf");
                     let response = self.serializer.handle_getlist(
                         &self.list_kv_server,
                         &self.linked_list_kv_server,
@@ -349,6 +438,8 @@ where
                     )?;
                 }
                 MsgType::Put => {
+                    #[cfg(feature = "profiler")]
+                    demikernel::timer!("handle put protobuf and queue protobuf");
                     let response = self.serializer.handle_put(
                         &mut self.kv_server,
                         &mut self.mempool_ids,
@@ -553,6 +644,27 @@ where
         let mut output_stream = CodedOutputStream::bytes(buf);
         let mut get_req = kv_messages::GetReq::new();
         get_req.key = key.to_string();
+        get_req
+            .write_to(&mut output_stream)
+            .wrap_err("Failed to write into CodedOutputStream for GetReq proto")?;
+        output_stream
+            .flush()
+            .wrap_err("Failed to flush output stream.")?;
+
+        Ok(output_stream.total_bytes_written() as _)
+    }
+
+    fn serialize_get_from_list(
+        &self,
+        buf: &mut [u8],
+        key: &str,
+        idx: usize,
+        _datapath: &D,
+    ) -> Result<usize> {
+        let mut output_stream = CodedOutputStream::bytes(buf);
+        let mut get_req = kv_messages::GetFromListReq::new();
+        get_req.key = key.to_string();
+        get_req.idx = idx as u32;
         get_req
             .write_to(&mut output_stream)
             .wrap_err("Failed to write into CodedOutputStream for GetReq proto")?;

@@ -100,7 +100,7 @@ macro_rules! run_client (
 
                 client.init(&mut connection)?;
 
-                cornflakes_libos::state_machine::client::run_client_loadgen(i, &mut client, &mut connection, opt_clone.retries, opt_clone.total_time, opt_clone.logfile.clone(), opt_clone.rate, opt_clone.size, schedule, opt_clone.num_threads as _)
+                cornflakes_libos::state_machine::client::run_client_loadgen(i, opt_clone.num_threads as _, opt_clone.client_id as _, opt_clone.num_clients as _, &mut client, &mut connection, opt_clone.retries, opt_clone.total_time, opt_clone.logfile.clone(), opt_clone.rate, opt_clone.size, schedule, opt_clone.ready_file.clone())
             }));
         }
 
@@ -220,6 +220,15 @@ pub struct DsEchoOpt {
     )]
     pub num_threads: usize,
     #[structopt(
+        long = "num_clients",
+        help = "Total number of clients",
+        default_value = "1"
+    )]
+    pub num_clients: usize,
+    #[structopt(long = "client_id", default_value = "0")]
+    pub client_id: usize,
+    #[structopt(long = "start_cutoff", default_value = "0")]
+    #[structopt(
         long = "push_buf_type",
         help = "Push API to use",
         default_value = "sga"
@@ -233,7 +242,7 @@ pub struct DsEchoOpt {
     pub inline_mode: InlineMode,
     #[structopt(
         long = "copy_threshold",
-        help = "Datapath copy threshold. Copies everything below this threshold. If set to infinity, tries to use zero-copy for everything. If set to 0, uses zero-copy for nothing.",
+        help = "Datapath copy threshold. Copies everything below this threshold. If set to 0, tries to use zero-copy for everything. If set to infinity, uses zero-copy for nothing.",
         default_value = "256"
     )]
     pub copying_threshold: usize,

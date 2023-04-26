@@ -1,10 +1,16 @@
 pub mod capnproto;
+pub mod cdn;
 pub mod cornflakes_dynamic;
 pub mod flatbuffers;
+pub mod google_protobuf;
 pub mod protobuf;
 pub mod redis;
 pub mod retwis;
 pub mod retwis_run_datapath;
+pub mod run_cdn;
+pub mod run_google_protobuf;
+pub mod run_twitter;
+pub mod twitter;
 pub mod ycsb;
 pub mod ycsb_run_datapath;
 
@@ -24,9 +30,9 @@ use bytes::Bytes;
 use color_eyre::eyre::{bail, Result};
 use cornflakes_libos::{
     allocator::MempoolID,
-    datapath::{Datapath, ReceivedPkt},
+    datapath::{pad_mempool_size, Datapath, ReceivedPkt},
     state_machine::client::ClientSM,
-    timing::ManualHistogram,
+    timing::{ManualHistogram, SizedManualHistogram},
     utils::AddressInfo,
     MsgID,
 };
@@ -36,10 +42,6 @@ use std::{
     io::{prelude::*, BufReader},
     marker::PhantomData,
 };
-
-pub static mut MIN_MEMPOOL_SIZE: usize = 262144;
-pub static mut NUM_REGISTRATIONS: usize = 1;
-pub static mut REGISTER_AT_START: bool = false;
 
 // 8 bytes at front of message for framing
 pub const REQ_TYPE_SIZE: usize = 4;
@@ -57,6 +59,7 @@ pub enum MsgType {
     FollowUnfollow,     // follow unfollow retwis
     PostTweet,          // Post Tweet Retwis,
     GetTimeline(usize), // Get timeline
+    GetFromList,        // Get item from list kv. List index should be encoded in message itself.
 }
 
 impl MsgType {
@@ -78,6 +81,7 @@ impl MsgType {
             (8, 0) => Ok(MsgType::FollowUnfollow),
             (9, 0) => Ok(MsgType::PostTweet),
             (10, 0) => Ok(MsgType::GetTimeline(0)),
+            (11, 0) => Ok(MsgType::GetFromList),
             (x, y) => {
                 bail!("unrecognized message type for kv store app: {}, {}", x, y);
             }
@@ -129,6 +133,10 @@ impl MsgType {
             }
             MsgType::GetTimeline(_size) => {
                 BigEndian::write_u16(&mut buf[0..2], 10);
+                BigEndian::write_u16(&mut buf[2..4], 0);
+            }
+            MsgType::GetFromList => {
+                BigEndian::write_u16(&mut buf[0..2], 11);
                 BigEndian::write_u16(&mut buf[2..4], 0);
             }
         }
@@ -242,6 +250,10 @@ where
         &mut self.map
     }
 
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
     pub fn get(&self, key: &str) -> Option<&Box<KVNode<D>>> {
         self.map.get(key)
     }
@@ -319,6 +331,10 @@ where
         KVServer {
             map: HashMap::default(),
         }
+    }
+
+    pub fn contains_key(&self, s: &str) -> bool {
+        self.map.contains_key(s)
     }
 
     pub fn len(&self) -> usize {
@@ -463,20 +479,20 @@ fn allocate_datapath_buffer<D>(
 where
     D: Datapath,
 {
-    match datapath.allocate(size)? {
+    match datapath.allocate(pad_mempool_size(size))? {
         Some(buf) => Ok(buf),
         None => {
-            mempool_ids.append(&mut datapath.add_memory_pool(
+            mempool_ids.append(&mut datapath.add_memory_pool_with_size(
                 size,
-                unsafe { MIN_MEMPOOL_SIZE },
-                unsafe { NUM_REGISTRATIONS },
-                unsafe { REGISTER_AT_START },
+                unsafe { cornflakes_libos::datapath::NUM_PAGES },
+                unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS },
+                unsafe { cornflakes_libos::datapath::REGISTER_AT_START },
             )?);
             tracing::info!("Added mempool");
             match datapath.allocate(size)? {
                 Some(buf) => Ok(buf),
                 None => {
-                    unreachable!();
+                    panic!("Could not allocate");
                 }
             }
         }
@@ -522,6 +538,13 @@ pub trait ServerLoadGenerator {
             &mut mempool_ids,
             datapath,
             use_linked_list_kv,
+        )?;
+
+        datapath.allocate_fallback_mempools(
+            &mut mempool_ids,
+            unsafe { cornflakes_libos::datapath::NUM_PAGES },
+            unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS },
+            unsafe { cornflakes_libos::datapath::REGISTER_AT_START },
         )?;
         Ok((
             kv_server,
@@ -613,6 +636,14 @@ pub trait RequestGenerator {
         Self: Sized,
     {
         unimplemented!();
+    }
+
+    fn full_packets_sent(&self, num_sent: usize) -> Result<usize> {
+        Ok(num_sent)
+    }
+
+    fn full_packets_received(&self, unique_msgids_received: Vec<MsgID>) -> Result<usize> {
+        Ok(unique_msgids_received.len())
     }
 
     fn next_request(&mut self) -> Result<Option<Self::RequestLine>>;
@@ -729,6 +760,14 @@ where
         _values: &Vec<String>,
         _datapath: &D,
     ) -> Result<usize>;
+
+    fn serialize_get_from_list(
+        &self,
+        buf: &mut [u8],
+        key: &str,
+        idx: usize,
+        _datapath: &D,
+    ) -> Result<usize>;
 }
 
 pub struct KVClient<R, C, D>
@@ -742,11 +781,14 @@ where
     serializer: C,
     _datapath: PhantomData<D>,
     last_sent_id: MsgID,
+    noops_sent: usize,
     received: usize,
     num_retried: usize,
     num_timed_out: usize,
     server_addr: AddressInfo,
     rtts: ManualHistogram,
+    sized_rtts: SizedManualHistogram,
+    recording_size_rtts: bool,
     buf: Vec<u8>,
     outgoing_requests: HashMap<MsgID, R::RequestLine>,
     outgoing_msg_types: HashMap<MsgID, R::RequestLine>,
@@ -777,11 +819,14 @@ where
             requests: Vec::default(),
             serializer: C::new(),
             last_sent_id: 0,
+            noops_sent: 0,
             received: 0,
             num_retried: 0,
             num_timed_out: 0,
             server_addr: server_addr,
             rtts: ManualHistogram::new(max_num_requests),
+            sized_rtts: SizedManualHistogram::new(16384, max_num_requests),
+            recording_size_rtts: false,
             _datapath: PhantomData,
             buf: vec![0u8; D::max_packet_size()],
             outgoing_requests: HashMap::default(),
@@ -825,6 +870,33 @@ where
 {
     type Datapath = D;
 
+    fn update_received_and_sent(&mut self, unique_msgids_received: Vec<MsgID>) -> Result<()> {
+        let full_packets_sent = self
+            .request_generator
+            .full_packets_sent(self.last_sent_id as _)?;
+        self.last_sent_id = full_packets_sent as _;
+
+        let full_received = self
+            .request_generator
+            .full_packets_received(unique_msgids_received as _)?;
+
+        self.received = full_received as _;
+        Ok(())
+    }
+
+    fn get_current_id(&self) -> u32 {
+        self.last_sent_id
+    }
+
+    fn increment_noop_sent(&mut self) {
+        self.last_sent_id += 1;
+        self.noops_sent += 1;
+    }
+
+    fn get_noops_sent(&self) -> usize {
+        self.noops_sent
+    }
+
     fn increment_uniq_received(&mut self) {
         self.received += 1;
     }
@@ -855,6 +927,22 @@ where
 
     fn num_timed_out(&self) -> usize {
         self.num_timed_out
+    }
+
+    fn get_sized_rtts(&self) -> &cornflakes_libos::timing::SizedManualHistogram {
+        &self.sized_rtts
+    }
+
+    fn get_mut_sized_rtts(&mut self) -> &mut cornflakes_libos::timing::SizedManualHistogram {
+        &mut self.sized_rtts
+    }
+
+    fn set_recording_size_rtts(&mut self) {
+        self.recording_size_rtts = true;
+    }
+
+    fn recording_size_rtts(&self) -> bool {
+        self.recording_size_rtts
     }
 
     fn get_mut_rtts(&mut self) -> &mut ManualHistogram {
@@ -901,6 +989,7 @@ where
             let buf_size = self.write_request(&next_request, &datapath)?;
             tracing::debug!(
                 msg_id = self.last_sent_id,
+                bytes =? &self.buf[0..buf_size],
                 "Sending msg of type {:?}",
                 next_request
             );
