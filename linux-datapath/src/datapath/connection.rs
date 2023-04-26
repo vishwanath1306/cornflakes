@@ -2,7 +2,6 @@ use byteorder::{ByteOrder, NetworkEndian};
 use bytes::{BufMut, Bytes, BytesMut};
 use color_eyre::eyre::WrapErr;
 use color_eyre::eyre::{bail, ensure, Result};
-use cornflakes_libos::datapath::CornflakesSegment;
 use cornflakes_libos::{
     allocator::MempoolID,
     datapath::{Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt},
@@ -548,14 +547,6 @@ impl Datapath for LinuxConnection {
         _register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
         Ok(vec![])
-    }
-
-    fn register_segment(&mut self, _seg: &CornflakesSegment) -> Result<()> {
-        Ok(())
-    }
-
-    fn unregister_segment(&mut self, _seg: &CornflakesSegment) -> Result<()> {
-        Ok(())
     }
 
     fn header_size(&self) -> usize {

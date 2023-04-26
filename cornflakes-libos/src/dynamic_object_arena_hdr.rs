@@ -440,7 +440,7 @@ where
             arr.copy_from_slice(ptr);
             return Ok(CFBytes::Copied(arr));
         } else {
-            match datapath.recover_metadata(ptr)? {
+            match datapath.recover_metadata_if_pinned_and_insert_into_zero_copy_cache(ptr)? {
                 Some(m) => Ok(CFBytes::RefCounted(m)),
                 None => {
                     let mut arr =
@@ -812,7 +812,7 @@ where
             arr.copy_from_slice(ptr);
             return Ok(CFString::Copied(arr));
         } else {
-            match datapath.recover_metadata(ptr)? {
+            match datapath.recover_metadata_if_pinned_and_insert_into_zero_copy_cache(ptr)? {
                 Some(m) => Ok(CFString::RefCounted(m)),
                 None => {
                     let mut arr =

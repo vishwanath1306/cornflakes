@@ -10,6 +10,7 @@ use structopt::StructOpt;
 #[macro_export]
 macro_rules! run_server_cdn(
     ($kv_server: ty, $datapath: ty, $opt: ident) => {
+        cornflakes_libos::datapath::set_mempool_params($opt.num_pages_per_mempool, $opt.num_registrations, !$opt.do_not_register_at_start);
         let is_baseline = is_baseline(&$opt);
         let mut datapath_params = <$datapath as Datapath>::parse_config_file(&$opt.config_file, &$opt.server_ip)?;
         let addresses = <$datapath as Datapath>::compute_affinity(&datapath_params, 1, None, AppMode::Server)?;
@@ -244,4 +245,21 @@ pub struct CdnOpt {
         default_value = "1000000"
     )]
     pub max_num_lines: usize,
+    #[structopt(
+        long = "num_pages",
+        help = "Number of pages per allocated mempool",
+        default_value = "64"
+    )]
+    pub num_pages_per_mempool: usize,
+    #[structopt(
+        long = "num_registrations",
+        help = "Number of registrations per allocated mempool",
+        default_value = "1"
+    )]
+    pub num_registrations: usize,
+    #[structopt(
+        long = "dont_register_at_start",
+        help = "Register mempool memory at start"
+    )]
+    pub do_not_register_at_start: bool,
 }

@@ -5956,6 +5956,7 @@ impl Datapath for Mlx5Connection {
     fn allocate_fallback_mempools(
         &mut self,
         mempool_ids: &mut Vec<MempoolID>,
+        num_pages: usize,
         num_registration_units: usize,
         register_at_start: bool,
     ) -> Result<()> {
@@ -5963,6 +5964,7 @@ impl Datapath for Mlx5Connection {
             tracing::info!("Allocating one more mempool with size {}", *size);
             mempool_ids.append(&mut self.add_memory_pool_with_size(
                 *size,
+                num_pages,
                 num_registration_units,
                 register_at_start,
             )?);

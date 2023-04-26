@@ -18,6 +18,32 @@ pub enum InlineMode {
     ObjectHeader,
 }
 
+pub static mut NUM_PAGES: usize = 64;
+pub static mut NUM_REGISTRATIONS: usize = 1;
+pub static mut REGISTER_AT_START: bool = true;
+pub const MIN_MEMPOOL_BUF_SIZE: usize = 8;
+
+pub fn set_mempool_params(
+    num_pages_per_mempool: usize,
+    num_registrations: usize,
+    register_at_start: bool,
+) {
+    unsafe {
+        NUM_PAGES = num_pages_per_mempool;
+        NUM_REGISTRATIONS = num_registrations;
+        REGISTER_AT_START = register_at_start;
+    }
+}
+
+pub fn pad_mempool_size(size: usize) -> usize {
+    if size < MIN_MEMPOOL_BUF_SIZE {
+        return MIN_MEMPOOL_BUF_SIZE;
+    } else {
+        // return nearest power of 2 above this
+        return super::allocator::align_to_pow2(size);
+    }
+}
+
 impl Default for InlineMode {
     fn default() -> Self {
         InlineMode::Nothing
@@ -610,11 +636,10 @@ pub trait Datapath {
     fn add_memory_pool_with_size(
         &mut self,
         size: usize,
+        num_pages: usize,
         num_registration_units: usize,
         register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
-        // TODO: somehow make this more configurable
-        let num_pages = 64;
         let min_elts = num_pages * 2097152 / size;
         self.add_memory_pool(size, min_elts, num_registration_units, register_at_start)
     }
@@ -622,6 +647,7 @@ pub trait Datapath {
     fn allocate_fallback_mempools(
         &mut self,
         _mempool_ids: &mut Vec<MempoolID>,
+        _num_pages: usize,
         _num_registration_units: usize,
         _register_at_start: bool,
     ) -> Result<()> {

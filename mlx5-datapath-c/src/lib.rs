@@ -6,23 +6,13 @@ use cf_kv::{
 };
 use cornflakes_libos::{
     allocator::MempoolID,
-    datapath::{Datapath, InlineMode, ReceivedPkt},
+    datapath::{pad_mempool_size, Datapath, InlineMode, ReceivedPkt},
     dynamic_object_arena_hdr::{CFBytes, CFString},
     {ArenaOrderedRcSga, OrderedSga},
 };
 use cornflakes_utils::{global_debug_init_env, AppMode};
 use mlx5_datapath::datapath::connection::{Mlx5Buffer, Mlx5Connection};
 use std::{ffi::CStr, io::Write, net::Ipv4Addr, str::FromStr};
-const MIN_MEMPOOL_BUF_SIZE: usize = 8;
-
-fn pad_mempool_size(size: usize) -> usize {
-    if size < MIN_MEMPOOL_BUF_SIZE {
-        return MIN_MEMPOOL_BUF_SIZE;
-    } else {
-        // return nearest power of 2 above this
-        return cornflakes_libos::allocator::align_to_pow2(size);
-    }
-}
 
 #[no_mangle]
 pub extern "C" fn Mlx5_global_debug_init() {
@@ -203,12 +193,14 @@ pub extern "C" fn Mlx5Connection_add_memory_pool(
 
 #[no_mangle]
 pub extern "C" fn Mlx5Connection_set_mempool_params(
+    num_pages_per_mempool: usize,
     num_registration_units: usize,
     register_at_start: usize,
 ) {
     unsafe {
-        cf_kv::NUM_REGISTRATIONS = num_registration_units;
-        cf_kv::REGISTER_AT_START = register_at_start == 1;
+        cornflakes_libos::datapath::NUM_PAGES = num_pages_per_mempool;
+        cornflakes_libos::datapath::NUM_REGISTRATIONS = num_registration_units;
+        cornflakes_libos::datapath::REGISTER_AT_START = register_at_start == 1;
     }
 }
 
@@ -259,12 +251,14 @@ pub extern "C" fn Mlx5Connection_allocate_and_copy_into_original_datapath_buffer
             println!("Probably crashing at mempool ids box line",);
             let num_mempools = mempool_ids_vec_box.len();
             println!("Didn't make it past mempool ids box line");
-            let num_registration_units = unsafe { cf_kv::NUM_REGISTRATIONS };
-            let register_at_start = unsafe { cf_kv::REGISTER_AT_START };
+            let num_pages = unsafe { cornflakes_libos::datapath::NUM_PAGES };
+            let num_registration_units = unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS };
+            let register_at_start = unsafe { cornflakes_libos::datapath::REGISTER_AT_START };
             mempool_ids_vec_box.append(
                 &mut datapath
                     .add_memory_pool_with_size(
                         pad_mempool_size(data_buffer_len),
+                        num_pages,
                         num_registration_units,
                         register_at_start,
                     )
@@ -313,13 +307,15 @@ pub extern "C" fn Mlx5Connection_allocate_datapath_buffer(
                 pad_mempool_size(size)
             );
             let num_mempools = mempool_ids_vec_box.len();
-            let num_registrations = unsafe { cf_kv::NUM_REGISTRATIONS };
-            let register_at_start = unsafe { cf_kv::REGISTER_AT_START };
+            let num_pages = unsafe { cornflakes_libos::datapath::NUM_PAGES };
+            let num_registration_units = unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS };
+            let register_at_start = unsafe { cornflakes_libos::datapath::REGISTER_AT_START };
             mempool_ids_vec_box.append(
                 &mut datapath
                     .add_memory_pool_with_size(
                         pad_mempool_size(size),
-                        num_registrations,
+                        num_pages,
+                        num_registration_units,
                         register_at_start,
                     )
                     .unwrap(),

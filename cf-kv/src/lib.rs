@@ -30,7 +30,7 @@ use bytes::Bytes;
 use color_eyre::eyre::{bail, Result};
 use cornflakes_libos::{
     allocator::MempoolID,
-    datapath::{Datapath, ReceivedPkt},
+    datapath::{pad_mempool_size, Datapath, ReceivedPkt},
     state_machine::client::ClientSM,
     timing::{ManualHistogram, SizedManualHistogram},
     utils::AddressInfo,
@@ -43,11 +43,6 @@ use std::{
     marker::PhantomData,
 };
 
-pub static mut MIN_MEMPOOL_SIZE: usize = 262144;
-pub static mut NUM_REGISTRATIONS: usize = 1;
-pub static mut REGISTER_AT_START: bool = false;
-
-const MIN_MEMPOOL_BUF_SIZE: usize = 8;
 // 8 bytes at front of message for framing
 pub const REQ_TYPE_SIZE: usize = 4;
 
@@ -476,15 +471,6 @@ where
     }
 }
 
-fn pad_mempool_size(size: usize) -> usize {
-    if size < MIN_MEMPOOL_BUF_SIZE {
-        return MIN_MEMPOOL_BUF_SIZE;
-    } else {
-        // return nearest power of 2 above this
-        return cornflakes_libos::allocator::align_to_pow2(size);
-    }
-}
-
 fn allocate_datapath_buffer<D>(
     datapath: &mut D,
     size: usize,
@@ -496,11 +482,11 @@ where
     match datapath.allocate(pad_mempool_size(size))? {
         Some(buf) => Ok(buf),
         None => {
-            mempool_ids.append(&mut datapath.add_memory_pool(
+            mempool_ids.append(&mut datapath.add_memory_pool_with_size(
                 size,
-                unsafe { MIN_MEMPOOL_SIZE },
-                unsafe { NUM_REGISTRATIONS },
-                unsafe { REGISTER_AT_START },
+                unsafe { cornflakes_libos::datapath::NUM_PAGES },
+                unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS },
+                unsafe { cornflakes_libos::datapath::REGISTER_AT_START },
             )?);
             tracing::info!("Added mempool");
             match datapath.allocate(size)? {
@@ -556,8 +542,9 @@ pub trait ServerLoadGenerator {
 
         datapath.allocate_fallback_mempools(
             &mut mempool_ids,
-            unsafe { NUM_REGISTRATIONS },
-            unsafe { REGISTER_AT_START },
+            unsafe { cornflakes_libos::datapath::NUM_PAGES },
+            unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS },
+            unsafe { cornflakes_libos::datapath::REGISTER_AT_START },
         )?;
         Ok((
             kv_server,
