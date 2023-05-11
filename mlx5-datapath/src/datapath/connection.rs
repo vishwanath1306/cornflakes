@@ -5999,6 +5999,7 @@ impl Datapath for Mlx5Connection {
         cornflakes_slab.set_id(id);
 
         // initialize mempool into zero copy cache
+        tracing::debug!("Initialized Slab in ZCC: {:?}", cornflakes_slab);
         self.zero_copy_cache.initialize_slab(
             &cornflakes_slab,
             num_registration_units,
@@ -6061,7 +6062,7 @@ impl Datapath for Mlx5Connection {
     fn initialize_zero_copy_cache_thread(&self) {
         // create a clone of the zero copy cache for this thread
         let mut zcc_clone = self.zero_copy_cache.clone();
-
+        tracing::debug!("Initialializing ZCC Thread");
         // create a global thread context ptr for pinning unpinning thread
         let global_thread_ptr = self.thread_context.get_global_context_rc();
         std::thread::spawn(move || {

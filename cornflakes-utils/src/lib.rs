@@ -3,6 +3,7 @@ use eui48::MacAddress;
 use hashbrown::HashMap;
 use std::{fs::read_to_string, net::Ipv4Addr, path::Path, str::FromStr};
 use tracing::Level;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber;
 use tracing_subscriber::{
     filter::{EnvFilter, LevelFilter},
@@ -310,7 +311,7 @@ impl std::str::FromStr for SerializationType {
             "cornflakes-fixed" | "CORNFLAKES-FIXED" | "Cornflakes-Fixed" | "CornflakesFixed" => {
                 SerializationType::CornflakesFixed
             }
-            "cornflakes1c-fixed" | "CORNFLAKES1C-FIXED" | "Cornflakes1C-Fixed"
+        "cornflakes1c-fixed" | "CORNFLAKES1C-FIXED" | "Cornflakes1C-Fixed"
             | "Cornflakes1c-Fixed" => SerializationType::CornflakesOneCopyFixed,
             "cornflakes1c-dynamic"
             | "CORNFLAKES1C-DYNAMIC"
@@ -356,6 +357,7 @@ pub fn global_debug_init_env() -> Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
+        .with_thread_ids(true)
         .init();
     Ok(())
 }
