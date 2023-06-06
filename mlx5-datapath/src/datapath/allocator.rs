@@ -7,14 +7,22 @@ use super::{
 };
 use color_eyre::eyre::{bail, Result};
 use cornflakes_libos::{allocator::DatapathMemoryPool, datapath::Datapath, mem::closest_2mb_page};
-use std::boxed::Box;
+use std::{boxed::Box, marker::PhantomData};
+use zero_copy_cache::data_structures::CacheBuilder;
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct DataMempool {
+pub struct DataMempool<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
     mempool_ptr: *mut [u8],
+    _phantom_data: PhantomData<CB>,
 }
 
-impl Drop for DataMempool {
+impl<CB> Drop for DataMempool<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
     fn drop(&mut self) {
         // (a) drop pages behind mempool itself
         // (b) drop box allocated for registered mempool pointer
@@ -32,7 +40,10 @@ impl Drop for DataMempool {
     }
 }
 
-impl DataMempool {
+impl<CB> DataMempool<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
     #[inline]
     pub fn get_cornflakes_mlx5_slab(&self) -> Result<CornflakesMlx5Slab> {
         let page_size = match unsafe { access!(self.mempool(), pgsize, usize) } {
@@ -62,7 +73,10 @@ impl DataMempool {
     #[inline]
     pub fn new_from_ptr(mempool_ptr: *mut [u8]) -> Self {
         tracing::info!("New mempool at ptr from ptr: {:?}", mempool_ptr,);
-        DataMempool { mempool_ptr }
+        DataMempool {
+            mempool_ptr,
+            _phantom_data: PhantomData::default(),
+        }
     }
 
     #[inline]
@@ -108,7 +122,10 @@ impl DataMempool {
             bail!("Failed register mempool with params {:?}", mempool_params);
         }
         tracing::info!("New mempool at ptr: {:?}", mempool_ptr,);
-        Ok(DataMempool { mempool_ptr })
+        Ok(DataMempool {
+            mempool_ptr,
+            _phantom_data: PhantomData::default(),
+        })
     }
 
     #[inline]
@@ -128,8 +145,11 @@ impl DataMempool {
     }
 }
 
-impl DatapathMemoryPool for DataMempool {
-    type DatapathImpl = Mlx5Connection;
+impl<CB> DatapathMemoryPool for DataMempool<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
+    type DatapathImpl = Mlx5Connection<CB>;
 
     type RegistrationContext = *mut custom_mlx5_per_thread_context;
 

@@ -31,7 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 use yaml_rust::{Yaml, YamlLoader};
-use zero_copy_cache::data_structures::{DatapathSlab, ZeroCopyCache};
+use zero_copy_cache::data_structures::{CacheBuilder, DatapathSlab, ZeroCopyCache};
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 128;
 const COMPLETION_BUDGET: usize = 32;
@@ -39,6 +39,12 @@ const RECEIVE_BURST_SIZE: usize = 32;
 const MAX_BUFFER_SIZE: usize = 16384;
 const MEMPOOL_MIN_ELTS: usize = 8192;
 const TX_POOL_NUM_REGISTRATIONS: usize = 1;
+
+// ZeroCopyCache initialization parameters (can be configured via command line)
+pub const ZCC_PINNING_LIMIT_2MB_PAGES: usize = 64;
+pub const ZCC_SEGMENT_SIZE_2MB_PAGES: usize = 8;
+pub const ZCC_PIN_ON_DEMAND: bool = false;
+pub const ZCC_SLEEP_DURATION_MILLIS: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CornflakesMlx5Slab {
@@ -179,15 +185,17 @@ impl DatapathSlab for CornflakesMlx5Slab {
     }
 }
 
-unsafe extern "C" fn io_completion_callback(
+/*unsafe extern "C" fn io_completion_callback<CB>(
     zcc_ptr: *mut ::std::os::raw::c_void,
     addr: *mut ::std::os::raw::c_void,
     len: u64,
-) {
-    let zero_copy_cache = zcc_ptr as *mut ZeroCopyCache<CornflakesMlx5Slab>;
+) where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
+    let zero_copy_cache = zcc_ptr as *mut ZeroCopyCache<CornflakesMlx5Slab, CB>;
     let buf = std::slice::from_raw_parts(addr as *const u8, len as _);
     (*zero_copy_cache).record_io_completion(buf);
-}
+}*/
 
 #[derive(PartialEq, Eq)]
 pub struct Mlx5Buffer {
@@ -742,7 +750,10 @@ impl Drop for RecvMbufArray {
 }
 
 #[derive(Debug)]
-pub struct Mlx5Connection {
+pub struct Mlx5Connection<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
     /// Per thread context.
     thread_context: Mlx5PerThreadContext,
     /// Server or client mode
@@ -758,7 +769,7 @@ pub struct Mlx5Connection {
     /// Map from AddressInfo to connection id
     address_to_conn_id: HashMap<AddressInfo, ConnID>,
     /// Allocator for outgoing mbufs and packets.
-    allocator: MemoryPoolAllocator<DataMempool>,
+    allocator: MemoryPoolAllocator<DataMempool<CB>>,
     /// Threshold for copying a segment or leaving as a separate scatter-gather entry.
     copying_threshold: usize,
     /// Threshold for max number of segments when sending.
@@ -776,10 +787,13 @@ pub struct Mlx5Connection {
     /// header buffer to use while posting entries
     header_buffer: Vec<u8>,
     /// Zero copy cache
-    zero_copy_cache: ZeroCopyCache<CornflakesMlx5Slab>,
+    zero_copy_cache: ZeroCopyCache<CornflakesMlx5Slab, CB>,
 }
 
-impl Mlx5Connection {
+impl<CB> Mlx5Connection<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
     fn process_warmup_noop(&mut self, pkt: ReceivedPkt<Self>) -> Result<()> {
         self.echo(vec![pkt])?;
         Ok(())
@@ -1228,8 +1242,9 @@ impl Mlx5Connection {
             custom_mlx5_process_completions(
                 self.thread_context.get_context_ptr(),
                 COMPLETION_BUDGET as _,
-                Some(io_completion_callback),
-                &mut self.zero_copy_cache as *mut ZeroCopyCache<CornflakesMlx5Slab>
+                None,
+                //Some(io_completion_callback::<CB>),
+                &mut self.zero_copy_cache as *mut ZeroCopyCache<CornflakesMlx5Slab, CB>
                     as *mut ::std::os::raw::c_void,
             )
         } != 0
@@ -2178,7 +2193,10 @@ fn parse_pci_addr(config_path: &str) -> Result<String> {
     }
 }
 
-impl Datapath for Mlx5Connection {
+impl<CB> Datapath for Mlx5Connection<CB>
+where
+    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+{
     type DatapathBuffer = Mlx5Buffer;
 
     type DatapathMetadata = MbufMetadata;
@@ -2421,7 +2439,12 @@ impl Datapath for Mlx5Connection {
             first_ctrl_seg: ptr::null_mut(),
             mbuf_metadatas: Default::default(),
             header_buffer: vec![0u8; Self::max_packet_size()],
-            zero_copy_cache: ZeroCopyCache::new(),
+            zero_copy_cache: ZeroCopyCache::new(
+                ZCC_PINNING_LIMIT_2MB_PAGES * PGSIZE_2MB,
+                ZCC_PINNING_LIMIT_2MB_PAGES * PGSIZE_2MB,
+                ZCC_PIN_ON_DEMAND,
+                ZCC_SLEEP_DURATION_MILLIS,
+            )?,
         })
     }
 
@@ -5926,8 +5949,10 @@ impl Datapath for Mlx5Connection {
     ) -> Result<Option<Self::DatapathMetadata>> {
         match self
             .zero_copy_cache
-            .record_access_and_get_io_info_if_pinned(buf)
-        {
+            .record_access_and_get_io_info_if_pinned(
+                buf,
+                self.thread_context.get_global_context_rc(),
+            )? {
             Some((mempool_id, lkey)) => {
                 match self.allocator.recover_from_mempool(mempool_id, buf)? {
                     Some(mut m) => {
@@ -6001,7 +6026,6 @@ impl Datapath for Mlx5Connection {
         // initialize mempool into zero copy cache
         self.zero_copy_cache.initialize_slab(
             &cornflakes_slab,
-            num_registration_units,
             register_at_start,
             self.thread_context.get_global_context_rc(),
         );
