@@ -7,12 +7,13 @@ use cornflakes_libos::{
 use cornflakes_utils::{AppMode, SerializationType, TraceLevel};
 use std::net::Ipv4Addr;
 use structopt::StructOpt;
+use zero_copy_cache;
 
 #[macro_export]
 macro_rules! run_server_google(
     ($kv_server: ty, $datapath: ty, $opt: ident) => {
         let is_baseline = is_baseline(&$opt);
-        cornflakes_libos::datapath::set_mempool_params($opt.num_pages_per_mempool, $opt.num_registrations, !$opt.do_not_register_at_start);
+        set_zcc_and_mempool_parameters!($opt);
         let mut datapath_params = <$datapath as Datapath>::parse_config_file(&$opt.config_file, &$opt.server_ip)?;
         let addresses = <$datapath as Datapath>::compute_affinity(&datapath_params, 1, None, AppMode::Server)?;
         let per_thread_contexts = <$datapath as Datapath>::global_init(1, &mut datapath_params, addresses)?;
@@ -273,14 +274,34 @@ pub struct GoogleProtobufOpt {
     )]
     pub num_pages_per_mempool: usize,
     #[structopt(
-        long = "num_registrations",
-        help = "Number of registrations per allocated mempool",
-        default_value = "1"
-    )]
-    pub num_registrations: usize,
-    #[structopt(
         long = "dont_register_at_start",
         help = "Register mempool memory at start"
     )]
     pub do_not_register_at_start: bool,
+    #[structopt(
+        long = "zcc_pinning_limit",
+        help = "Pinning limit (in 2MB pages)",
+        default_value = "64"
+    )]
+    pub zcc_pinning_limit_2mb_pages: usize,
+    #[structopt(
+        long = "zcc_segment_size",
+        help = "ZCC Segment Size (in 2MB pages)",
+        default_value = "8"
+    )]
+    pub zcc_segment_size_2mb_pages: usize,
+    #[structopt(long = "zcc_pin_on_demand", help = "Whether ZCC pins on demand")]
+    pub zcc_pin_on_demand: bool,
+    #[structopt(
+        long = "zcc_sleep_duration",
+        help = "ZCC Sleep duration (in millis)",
+        default_value = "1000"
+    )]
+    pub zcc_sleep_duration: u64,
+    #[structopt(
+        long = "zcc_alg",
+        help = "ZccAlgorithm",
+        default_value = "timestamplru"
+    )]
+    pub zcc_alg: zero_copy_cache::data_structures::CacheType,
 }

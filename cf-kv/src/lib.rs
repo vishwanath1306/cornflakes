@@ -13,6 +13,7 @@ pub mod run_twitter;
 pub mod twitter;
 pub mod ycsb;
 pub mod ycsb_run_datapath;
+pub mod zcc_macros;
 
 // TODO: though capnpc 0.14^ supports generating nested namespace files
 // there seems to be a bug in the code generation, so must include it at crate root
@@ -485,7 +486,6 @@ where
             mempool_ids.append(&mut datapath.add_memory_pool_with_size(
                 size,
                 unsafe { cornflakes_libos::datapath::NUM_PAGES },
-                unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS },
                 unsafe { cornflakes_libos::datapath::REGISTER_AT_START },
             )?);
             tracing::info!("Added mempool");
@@ -543,7 +543,6 @@ pub trait ServerLoadGenerator {
         datapath.allocate_fallback_mempools(
             &mut mempool_ids,
             unsafe { cornflakes_libos::datapath::NUM_PAGES },
-            unsafe { cornflakes_libos::datapath::NUM_REGISTRATIONS },
             unsafe { cornflakes_libos::datapath::REGISTER_AT_START },
         )?;
         Ok((

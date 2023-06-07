@@ -13,7 +13,14 @@ use zero_copy_cache::data_structures::CacheBuilder;
 #[derive(Debug, PartialEq, Eq)]
 pub struct DataMempool<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     mempool_ptr: *mut [u8],
     _phantom_data: PhantomData<CB>,
@@ -21,7 +28,14 @@ where
 
 impl<CB> Drop for DataMempool<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     fn drop(&mut self) {
         // (a) drop pages behind mempool itself
@@ -42,7 +56,14 @@ where
 
 impl<CB> DataMempool<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     #[inline]
     pub fn get_cornflakes_mlx5_slab(&self) -> Result<CornflakesMlx5Slab> {
@@ -147,7 +168,14 @@ where
 
 impl<CB> DatapathMemoryPool for DataMempool<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     type DatapathImpl = Mlx5Connection<CB>;
 

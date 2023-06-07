@@ -185,17 +185,24 @@ impl DatapathSlab for CornflakesMlx5Slab {
     }
 }
 
-/*unsafe extern "C" fn io_completion_callback<CB>(
+unsafe extern "C" fn io_completion_callback<CB>(
     zcc_ptr: *mut ::std::os::raw::c_void,
     addr: *mut ::std::os::raw::c_void,
     len: u64,
 ) where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     let zero_copy_cache = zcc_ptr as *mut ZeroCopyCache<CornflakesMlx5Slab, CB>;
     let buf = std::slice::from_raw_parts(addr as *const u8, len as _);
     (*zero_copy_cache).record_io_completion(buf);
-}*/
+}
 
 #[derive(PartialEq, Eq)]
 pub struct Mlx5Buffer {
@@ -752,7 +759,14 @@ impl Drop for RecvMbufArray {
 #[derive(Debug)]
 pub struct Mlx5Connection<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     /// Per thread context.
     thread_context: Mlx5PerThreadContext,
@@ -792,7 +806,14 @@ where
 
 impl<CB> Mlx5Connection<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     fn process_warmup_noop(&mut self, pkt: ReceivedPkt<Self>) -> Result<()> {
         self.echo(vec![pkt])?;
@@ -1242,8 +1263,7 @@ where
             custom_mlx5_process_completions(
                 self.thread_context.get_context_ptr(),
                 COMPLETION_BUDGET as _,
-                None,
-                //Some(io_completion_callback::<CB>),
+                Some(io_completion_callback::<CB>),
                 &mut self.zero_copy_cache as *mut ZeroCopyCache<CornflakesMlx5Slab, CB>
                     as *mut ::std::os::raw::c_void,
             )
@@ -2195,7 +2215,14 @@ fn parse_pci_addr(config_path: &str) -> Result<String> {
 
 impl<CB> Datapath for Mlx5Connection<CB>
 where
-    CB: CacheBuilder<CornflakesMlx5Slab> + std::fmt::Debug + Clone + PartialEq + Eq + Send + Sync,
+    CB: CacheBuilder<CornflakesMlx5Slab>
+        + std::fmt::Debug
+        + Clone
+        + PartialEq
+        + Eq
+        + Send
+        + Sync
+        + 'static,
 {
     type DatapathBuffer = Mlx5Buffer;
 
@@ -2423,6 +2450,7 @@ where
         let tx_mempool = DataMempool::new(&mempool_params, &context, false, true)?;
 
         let allocator = MemoryPoolAllocator::new(rx_mempool, tx_mempool)?;
+        let zcc_priv_info = context.get_global_context_rc();
 
         Ok(Mlx5Connection {
             thread_context: context,
@@ -2444,6 +2472,7 @@ where
                 ZCC_PINNING_LIMIT_2MB_PAGES * PGSIZE_2MB,
                 ZCC_PIN_ON_DEMAND,
                 ZCC_SLEEP_DURATION_MILLIS,
+                zcc_priv_info,
             )?,
         })
     }
@@ -5982,7 +6011,6 @@ where
         &mut self,
         mempool_ids: &mut Vec<MempoolID>,
         num_pages: usize,
-        num_registration_units: usize,
         register_at_start: bool,
     ) -> Result<()> {
         for size in self.allocator.get_cur_sizes().iter() {
@@ -5990,7 +6018,6 @@ where
             mempool_ids.append(&mut self.add_memory_pool_with_size(
                 *size,
                 num_pages,
-                num_registration_units,
                 register_at_start,
             )?);
         }
@@ -6028,7 +6055,7 @@ where
             &cornflakes_slab,
             register_at_start,
             self.thread_context.get_global_context_rc(),
-        );
+        )?;
 
         Ok(vec![id])
     }
@@ -6082,14 +6109,17 @@ where
         33
     }
 
-    fn initialize_zero_copy_cache_thread(&self) {
+    fn initialize_zero_copy_cache_thread(&self) -> Result<()> {
         // create a clone of the zero copy cache for this thread
         let mut zcc_clone = self.zero_copy_cache.clone();
 
         // create a global thread context ptr for pinning unpinning thread
         let global_thread_ptr = self.thread_context.get_global_context_rc();
         std::thread::spawn(move || {
-            zcc_clone.pin_and_unpin_thread(global_thread_ptr);
+            zcc_clone
+                .pin_and_unpin_thread(global_thread_ptr)
+                .expect("Failed to spawn pin unpin thread");
         });
+        Ok(())
     }
 }

@@ -18,21 +18,43 @@ pub enum InlineMode {
     ObjectHeader,
 }
 
+// Cornflakes mempool configuration parameters
 pub static mut NUM_PAGES: usize = 64;
-pub static mut NUM_REGISTRATIONS: usize = 1;
 pub static mut REGISTER_AT_START: bool = true;
 pub const MIN_MEMPOOL_BUF_SIZE: usize = 8;
 
-pub fn set_mempool_params(
-    num_pages_per_mempool: usize,
-    num_registrations: usize,
-    register_at_start: bool,
-) {
+// ZeroCopyCache initialization parameters (can be configured via command line)
+pub static mut ZCC_PINNING_LIMIT_2MB_PAGES: usize = 64;
+pub static mut ZCC_SEGMENT_SIZE_2MB_PAGES: usize = 8;
+pub static mut ZCC_PIN_ON_DEMAND: bool = false;
+pub static mut ZCC_SLEEP_DURATION_MILLIS: Duration = Duration::from_millis(1000);
+
+pub fn set_zcc_params(
+    zcc_pinning_limit_2mb_pages: usize,
+    zcc_segment_size_2mb_pages: usize,
+    zcc_pin_on_demand: bool,
+    zcc_sleep_duration_millis: u64,
+) -> Result<()> {
+    color_eyre::eyre::ensure!(zcc_pinning_limit_2mb_pages > 0 && zcc_segment_size_2mb_pages > 0 && zcc_pinning_limit_2mb_pages >= zcc_segment_size_2mb_pages && zcc_pinning_limit_2mb_pages % zcc_segment_size_2mb_pages == 0, "Pinning limit and segment size must be greater than 0, pinning limit must be greater than and a multiple of the segment size");
+    unsafe {
+        ZCC_PINNING_LIMIT_2MB_PAGES = zcc_pinning_limit_2mb_pages;
+        ZCC_SEGMENT_SIZE_2MB_PAGES = zcc_segment_size_2mb_pages;
+        ZCC_PIN_ON_DEMAND = zcc_pin_on_demand;
+        ZCC_SLEEP_DURATION_MILLIS = Duration::from_millis(zcc_sleep_duration_millis);
+    }
+    Ok(())
+}
+
+pub fn set_mempool_params(num_pages_per_mempool: usize, register_at_start: bool) -> Result<()> {
+    color_eyre::eyre::ensure!(
+        num_pages_per_mempool > 0,
+        "Num pages per mempool must be grater than 0"
+    );
     unsafe {
         NUM_PAGES = num_pages_per_mempool;
-        NUM_REGISTRATIONS = num_registrations;
         REGISTER_AT_START = register_at_start;
     }
+    Ok(())
 }
 
 pub fn pad_mempool_size(size: usize) -> usize {
@@ -637,10 +659,24 @@ pub trait Datapath {
         &mut self,
         size: usize,
         num_pages: usize,
-        num_registration_units: usize,
         register_at_start: bool,
     ) -> Result<Vec<MempoolID>> {
         let min_elts = num_pages * 2097152 / size;
+        color_eyre::eyre::ensure!(
+            num_pages >= unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES },
+            format!(
+                "Num pages per mempool must be atleast configured ZCC segment size: {}",
+                unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES }
+            )
+        );
+        color_eyre::eyre::ensure!(
+            num_pages % unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES } == 0,
+            format!(
+                "Num pages per mempool must be a multiple of configured ZCC segment size: {}",
+                unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES }
+            )
+        );
+        let num_registration_units = num_pages / unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES };
         self.add_memory_pool(size, min_elts, num_registration_units, register_at_start)
     }
 
@@ -648,7 +684,6 @@ pub trait Datapath {
         &mut self,
         _mempool_ids: &mut Vec<MempoolID>,
         _num_pages: usize,
-        _num_registration_units: usize,
         _register_at_start: bool,
     ) -> Result<()> {
         unimplemented!();
@@ -697,7 +732,7 @@ pub trait Datapath {
         9216
     }
 
-    fn initialize_zero_copy_cache_thread(&self) {
+    fn initialize_zero_copy_cache_thread(&self) -> Result<()> {
         unimplemented!();
     }
 }

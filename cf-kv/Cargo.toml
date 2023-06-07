@@ -35,6 +35,8 @@ redis = "0.21.5"
 zipf = "7.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.*"
+zero_copy_cache = {path = "../../zero_copy_cache"}
+
 
 [build-dependencies]
 protobuf-codegen = "3.0.3"

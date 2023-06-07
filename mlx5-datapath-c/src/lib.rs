@@ -50,7 +50,7 @@ pub extern "C" fn OrderedSga_allocate(size: usize, return_ptr: *mut *mut ::std::
 // mlx5-datapath/src/datapath/connection.rs
 
 #[no_mangle]
-pub extern "C" fn Mlx5Connection_new(
+pub extern "C" fn Mlx5Connection_new<CB>(
     config_file: *const ::std::os::raw::c_char,
     server_ip: *const ::std::os::raw::c_char,
 ) -> *mut ::std::os::raw::c_void {
