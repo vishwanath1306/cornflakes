@@ -5,7 +5,7 @@ use cf_kv::{
     flatbuffers::{FlatbuffersClient, FlatbuffersKVServer},
     protobuf::{ProtobufClient, ProtobufKVServer},
     run_cdn::*,
-    run_client_cdn, run_server_cdn, KVClient,
+    run_client_cdn, run_server_cdn, set_zcc_and_mempool_parameters, KVClient,
 };
 use color_eyre::eyre::Result;
 use cornflakes_libos::{

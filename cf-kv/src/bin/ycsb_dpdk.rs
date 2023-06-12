@@ -4,7 +4,7 @@ use cf_kv::{
     flatbuffers::{FlatbuffersClient, FlatbuffersKVServer},
     protobuf::{ProtobufClient, ProtobufKVServer},
     redis::RedisClient,
-    run_client, run_server,
+    run_client, run_server, set_zcc_and_mempool_parameters,
     ycsb::{YCSBClient, YCSBServerLoader},
     ycsb_run_datapath::*,
     KVClient,

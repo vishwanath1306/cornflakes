@@ -8,7 +8,7 @@ use cf_kv::{
     protobuf::{ProtobufClient, ProtobufKVServer},
     run_client_google,
     run_google_protobuf::*,
-    run_server_google, KVClient,
+    run_server_google, set_zcc_and_mempool_parameters, KVClient,
 };
 use color_eyre::eyre::Result;
 use cornflakes_libos::{
