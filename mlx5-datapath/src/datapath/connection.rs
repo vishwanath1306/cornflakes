@@ -5,7 +5,11 @@ use super::{
 };
 use cornflakes_libos::{
     allocator::{MemoryPoolAllocator, MempoolID},
-    datapath::{Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt},
+    datapath::{
+        Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt, ZCC_NO_ALGORITHM,
+        ZCC_PINNING_LIMIT_2MB_PAGES, ZCC_PIN_ON_DEMAND, ZCC_SEGMENT_SIZE_2MB_PAGES,
+        ZCC_SLEEP_DURATION_MILLIS,
+    },
     dynamic_rcsga_hybrid_hdr::HybridArenaRcSgaHdr,
     dynamic_sga_hdr::SgaHeaderRepr,
     mem::PGSIZE_2MB,
@@ -39,12 +43,6 @@ const RECEIVE_BURST_SIZE: usize = 32;
 const MAX_BUFFER_SIZE: usize = 16384;
 const MEMPOOL_MIN_ELTS: usize = 8192;
 const TX_POOL_NUM_REGISTRATIONS: usize = 1;
-
-// ZeroCopyCache initialization parameters (can be configured via command line)
-pub const ZCC_PINNING_LIMIT_2MB_PAGES: usize = 64;
-pub const ZCC_SEGMENT_SIZE_2MB_PAGES: usize = 8;
-pub const ZCC_PIN_ON_DEMAND: bool = false;
-pub const ZCC_SLEEP_DURATION_MILLIS: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CornflakesMlx5Slab {
@@ -199,6 +197,9 @@ unsafe extern "C" fn io_completion_callback<CB>(
         + Sync
         + 'static,
 {
+    if unsafe { ZCC_NO_ALGORITHM } {
+        return;
+    }
     let zero_copy_cache = zcc_ptr as *mut ZeroCopyCache<CornflakesMlx5Slab, CB>;
     let buf = std::slice::from_raw_parts(addr as *const u8, len as _);
     (*zero_copy_cache).record_io_completion(buf);
@@ -2468,10 +2469,11 @@ where
             mbuf_metadatas: Default::default(),
             header_buffer: vec![0u8; Self::max_packet_size()],
             zero_copy_cache: ZeroCopyCache::new(
-                ZCC_PINNING_LIMIT_2MB_PAGES * PGSIZE_2MB,
-                ZCC_PINNING_LIMIT_2MB_PAGES * PGSIZE_2MB,
-                ZCC_PIN_ON_DEMAND,
-                ZCC_SLEEP_DURATION_MILLIS,
+                unsafe { ZCC_PINNING_LIMIT_2MB_PAGES } * PGSIZE_2MB,
+                unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES } * PGSIZE_2MB,
+                unsafe { ZCC_NO_ALGORITHM },
+                unsafe { ZCC_PIN_ON_DEMAND },
+                unsafe { ZCC_SLEEP_DURATION_MILLIS },
                 zcc_priv_info,
             )?,
         })

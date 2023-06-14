@@ -10,6 +10,7 @@ use super::{
 use byteorder::{ByteOrder, LittleEndian};
 use color_eyre::eyre::{bail, Result};
 use std::{io::Write, net::Ipv4Addr, str::FromStr, time::Duration};
+use zero_copy_cache;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum InlineMode {
@@ -28,10 +29,12 @@ pub static mut ZCC_PINNING_LIMIT_2MB_PAGES: usize = 64;
 pub static mut ZCC_SEGMENT_SIZE_2MB_PAGES: usize = 8;
 pub static mut ZCC_PIN_ON_DEMAND: bool = false;
 pub static mut ZCC_SLEEP_DURATION_MILLIS: Duration = Duration::from_millis(1000);
+pub static mut ZCC_NO_ALGORITHM: bool = true;
 
 pub fn set_zcc_params(
     zcc_pinning_limit_2mb_pages: usize,
     zcc_segment_size_2mb_pages: usize,
+    zcc_alg: zero_copy_cache::data_structures::CacheType,
     zcc_pin_on_demand: bool,
     zcc_sleep_duration_millis: u64,
 ) -> Result<()> {
@@ -41,6 +44,10 @@ pub fn set_zcc_params(
         ZCC_SEGMENT_SIZE_2MB_PAGES = zcc_segment_size_2mb_pages;
         ZCC_PIN_ON_DEMAND = zcc_pin_on_demand;
         ZCC_SLEEP_DURATION_MILLIS = Duration::from_millis(zcc_sleep_duration_millis);
+
+        if zcc_alg == zero_copy_cache::data_structures::CacheType::NoAlg {
+            ZCC_NO_ALGORITHM = true;
+        }
     }
     Ok(())
 }
