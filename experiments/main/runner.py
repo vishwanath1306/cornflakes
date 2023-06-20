@@ -17,7 +17,190 @@ from main import connection
 import agenda
 import threading
 import pandas as pd
+ZCC_ALGS=["mfu", "linkedlistlru", "timestamplru"]
+ZCC_SYSTEM_NAMES = ["zcc_cornflakes_timestamplru",
+        "zcc_cornflakes_linkedlistlru", 
+        "zcc_cornflakes_mfu",
+        "vanilla_cornflakes", 
+        "zcc_on_demand"]
+MAX_PINNING_BUDGET=10000
+DEFAULT_SEGMENT_SIZE=16
+DEFAULT_PINNING_FREQUENCY=1000
 
+def extend_with_zcc_parameters(parser):
+    parser.add_argument("-num_pages_per_mempool",
+            "--num_pages_per_mempool",
+            type=int,
+            default=64,
+            help="Number of (2mb) pages each mempool is sized to be.")
+    parser.add_argument("-sys",
+            "--system",
+            choices=ZCC_SYSTEM_NAMES,
+            required=True,
+            help="Which baseline is being run.")
+    parser.add_argument("--zcc_pinning_budget",
+            dest = "zcc_pinning_budget",
+            type=int,
+            help="Zcc pinning budget in 2mb multiples.",
+            required=True)
+    parser.add_argument("-zcc_segment_size",
+            dest="zcc_segment_size",
+            type=int,
+            help="Zcc segment size in 2mb multiples.",
+            required=True)
+    parser.add_argument("-zcc_register_at_start",
+            dest="zcc_register_at_start",
+            type=bool,
+            help="Whether memory is registered at start")
+    parser.add_argument("--zcc_pinning_frequency",
+            dest="zcc_pinning_frequency",
+            help="Frequency of pinning unpinning thread in milliseconds",
+            default=1000)
+    return parser
+
+class ExtraZccParameters(object):
+    def __init__(self,
+            system: str,
+            zcc_pinning_limit=None,
+            zcc_segment_size=None,
+            register_at_start=False,
+            zcc_pinning_frequency=None,
+            num_pages_per_mempool=64):
+        ## initialize default cornflakes parameters
+        self.extra_serialization_params = ExtraSerializationParameters(
+                "cornflakes-dynamic",
+                "objectheader",
+                "nothing",
+                32,
+                512
+            )
+        self.num_pages_per_mempool = num_pages_per_mempool
+        if system == "vanilla_cornflakes":
+            self._system = "vanilla_cornflakes"
+            self.register_at_start=True
+            self.zcc_pin_on_demand =False
+            self.zcc_alg = "noalg"
+            self.zcc_pinning_limit = MAX_PINNING_BUDGET
+            self.zcc_segment_size = DEFAULT_SEGMENT_SIZE
+            ## for this version, pinning frequency doesn't matter
+            self.zcc_pinning_frequency=DEFAULT_PINNING_FREQUENCY
+        elif system == "zcc_on_demand":
+            ## need to provide segment size and pinning limit
+            self._system = "zcc_on_demand"
+            self.register_at_start=register_at_start
+            self.zcc_pin_on_demand = True
+            ## for this version, pinning frequency doesn't matter
+            self.zcc_pinning_frequency=DEFAULT_PINNING_FREQUENCY
+            self.zcc_alg = "ondemandlru"
+            if zcc_pinning_limit is not None:
+                self.zcc_pinning_limit = zcc_pinning_limit
+            else:
+                utils.error("Must provide non-null value for zcc_pinning_limit")
+                exit(1)
+            if zcc_segment_size is not None:
+                self.zcc_segment_size = zcc_segment_size
+            else:
+                utils.error("Must provide non-null value for zcc_segment_size")
+                exit(1)
+        elif "zcc_cornflakes" in system:
+            ##  alg is in second half of system name
+            zcc_alg = "_".join(system.split("_")[2:])
+            ## provide alg, pinning limit, segment size, pinning frequency
+            self._system = system
+            self.register_at_start = register_at_start
+            self.zcc_pin_on_demand = False
+            if zcc_alg not in ZCC_ALGS:
+                utils.error(f"Incorrect alg: {zcc_alg} should be in {ZCC_ALGS}")
+                exit(1)
+            else:
+                self.zcc_alg = zcc_alg
+            if zcc_pinning_limit is not None:
+                self.zcc_pinning_limit = zcc_pinning_limit
+            else:
+                utils.error("Must provide non-null value for zcc_pinning_limit")
+                exit(1)
+            if zcc_segment_size is not None:
+                self.zcc_segment_size = zcc_segment_size
+            else:
+                utils.error("Must provide non-null value for zcc_segment_size")
+                exit(1)
+            if zcc_pinning_frequency is not None:
+                self.zcc_pinning_frequency = zcc_pinning_frequency
+            else:
+                utils.error("Must provide non-null value for zcc_pinning_frequency")
+                exit(1)
+        else:
+            utils.error(f"Running unknown system: {system}")
+            exit(1)
+
+    @property
+    def system(self):
+        return self._system
+    
+    def fill_in_args(self, ret, program_name):
+        ## fill in serialization params
+        self.extra_serialization_params.fill_in_args(ret, program_name)
+        ## for zcc
+        if program_name == "start_client":
+            pass
+        else:
+            ret["num_pages_per_mempool"] = self.num_pages_per_mempool
+            ret["do_not_register_at_start"] = ""
+            if not(self.register_at_start):
+                ret["do_not_register_at_start"] = "--do_not_register_at_start"
+            ret["zcc_pinning_limit_2mb_pages"] = self.zcc_pinning_limit
+            ret["zcc_segment_size_2mb_pages"] = self.zcc_segment_size
+            ret["zcc_pin_on_demand"] = ""
+            if self.zcc_pin_on_demand:
+                ret["zcc_pin_on_demand"] = "--zcc_pin_on_demand"
+            ret["zcc_sleep_duration"] = self.zcc_pinning_frequency
+            ret["zcc_alg"] = self.zcc_alg
+
+    def __str__(self):
+        return f"pages_per_mempool: {self.num_pages_per_mempool}, "\
+                f"register at start: {self.register_at_start}, "\
+                f"pinning_limit_2mb: {self.zcc_pinning_limit}, "\
+                f"pin_on_demand: {self.zcc_pin_on_demand}, "\
+                f"pinning_frequency_millis: {self.zcc_pinning_frequency}, "\
+                f"zcc_alg: {self.zcc_alg}"
+    def get_iteration_params(self):
+        return ["num_pages_per_mempool", 
+                "register_at_start",
+                "pinning_limit_2mb_pages",
+                "segment_size_2mb_pages",
+                "pin_on_demand",
+                "pinning_frequency_millis",
+                ]
+    def get_iteration_params_values(self):
+        return {"num_pages_per_mempool": self.num_pages_per_mempool, 
+                "register_at_start": self.register_at_start,
+                "pinning_limit_2mb_pages": self.zcc_pinning_limit,
+                "segment_size_2mb_pages": self.zcc_segment_size,
+                "pin_on_demand": self.zcc_pin_on_demand,
+                "pinning_frequency_millis": self.zcc_pinning_frequency,
+                }
+    def get_num_pages_per_mempool_str(self):
+        return f"pp_mempool_{self.num_pages_per_mempool}"
+    def get_register_at_start_str(self):
+        return f"register_at_start_{self.register_at_start}"
+    def get_pinning_limit_str(self):
+        return f"pinning_limit_{self.zcc_pinning_limit}_x2mb"
+    def get_segment_size_str(self):
+        return f"segment_size_{self.zcc_segment_size}_x2mb"
+    def get_pin_on_demand_str(self):
+        return f"pin_on_demand_{self.zcc_pin_on_demand}"
+    def get_pinning_frequency_str(self):
+        return f"pinning_frequency_{self.zcc_pinning_frequency}_millis"
+
+    def get_subfolder(self):
+            return Path(self.get_segment_size_str())/\
+                self.get_pinning_limit_str()/\
+                self.get_pinning_frequency_str()/\
+                self.get_register_at_start_str()/\
+                self.get_pin_on_demand_str()/\
+                self.get_num_pages_per_mempool_str()
+
+    
 def extend_with_serialization_parameters(parser):
     parser.add_argument("-pbt", "--push_buf_type",
                                 dest="buf_mode",
