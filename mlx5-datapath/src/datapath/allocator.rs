@@ -281,7 +281,7 @@ where
         {
             -1 => None,
             x => {
-                tracing::info!(
+                tracing::debug!(
                     "Allocating data buf {:?} and adding lkey: {} from reg unit {}",
                     data,
                     x,

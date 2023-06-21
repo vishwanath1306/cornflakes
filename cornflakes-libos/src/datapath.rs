@@ -38,6 +38,14 @@ pub fn set_zcc_params(
     zcc_pin_on_demand: bool,
     zcc_sleep_duration_millis: u64,
 ) -> Result<()> {
+    tracing::info!(
+        pinning_limit = zcc_pinning_limit_2mb_pages,
+        segment_size = zcc_segment_size_2mb_pages,
+        modval = zcc_pinning_limit_2mb_pages % zcc_segment_size_2mb_pages,
+        zcc_pin_on_demand = zcc_pin_on_demand,
+        sleep_duration = zcc_sleep_duration_millis,
+        "Params"
+    );
     color_eyre::eyre::ensure!(zcc_pinning_limit_2mb_pages > 0 && zcc_segment_size_2mb_pages > 0 && zcc_pinning_limit_2mb_pages >= zcc_segment_size_2mb_pages && zcc_pinning_limit_2mb_pages % zcc_segment_size_2mb_pages == 0, "Pinning limit and segment size must be greater than 0, pinning limit must be greater than and a multiple of the segment size");
     unsafe {
         ZCC_PINNING_LIMIT_2MB_PAGES = zcc_pinning_limit_2mb_pages;
@@ -47,6 +55,8 @@ pub fn set_zcc_params(
 
         if zcc_alg == zero_copy_cache::data_structures::CacheType::NoAlg {
             ZCC_NO_ALGORITHM = true;
+        } else {
+            ZCC_NO_ALGORITHM = false;
         }
     }
     Ok(())

@@ -1,4 +1,14 @@
 #[macro_export]
+macro_rules! init_zcc_pin_and_unpin_thread(
+    ($opt: ident, $conn: ident) => {
+        if $opt.zcc_alg != zero_copy_cache::data_structures::CacheType::NoAlg  {
+            if !$opt.zcc_pin_on_demand {
+                $conn.initialize_zero_copy_cache_thread()?;
+            }
+        }
+    }
+);
+#[macro_export]
 macro_rules! set_zcc_and_mempool_parameters(
     ($opt: ident) => {
         cornflakes_libos::datapath::set_mempool_params($opt.num_pages_per_mempool, !$opt.do_not_register_at_start)?;

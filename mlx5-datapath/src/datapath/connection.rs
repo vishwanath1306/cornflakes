@@ -2471,8 +2471,8 @@ where
             zero_copy_cache: ZeroCopyCache::new(
                 unsafe { ZCC_PINNING_LIMIT_2MB_PAGES } * PGSIZE_2MB,
                 unsafe { ZCC_SEGMENT_SIZE_2MB_PAGES } * PGSIZE_2MB,
-                unsafe { ZCC_NO_ALGORITHM },
                 unsafe { ZCC_PIN_ON_DEMAND },
+                unsafe { ZCC_NO_ALGORITHM },
                 unsafe { ZCC_SLEEP_DURATION_MILLIS },
                 zcc_priv_info,
             )?,

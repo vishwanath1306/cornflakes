@@ -35,8 +35,7 @@ redis = "0.21.5"
 zipf = "7.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.*"
-# zero_copy_cache = {path = "../../zero_copy_cache"}
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "9969005a48c67ae83bb1281e3ec19335286cd244"}
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "b01d16da3c34dd354d7e8f1c9bd1ab3cbe9670e8" }
 
 
 [build-dependencies]

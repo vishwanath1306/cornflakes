@@ -25,7 +25,6 @@ class ZCCYCSBIteration(runner.Iteration):
                 num_threads,
                 load_trace,
                 access_trace,
-                system_name,
                 extra_zcc_params: runner.ExtraZccParameters,
                 trial=None):
         self.avg_size = avg_size
@@ -81,7 +80,7 @@ class ZCCYCSBIteration(runner.Iteration):
         offered_load_gbps = utils.get_tput_gbps(offered_load_pps,
                 self.get_iteration_avg_message_size())
         ret = {
-                "system_name": self.system,
+                "system": self.system,
                 "size_distr": self.size_distr,
                 "avg_size": self.avg_size,
                 "num_keys": self.num_keys,
@@ -301,7 +300,6 @@ class ZCCKVBench(runner.Experiment):
                              total_args.num_threads,
                              total_args.load_trace,
                              total_args.access_trace,
-                             extra_zcc_params.system,
                              extra_zcc_params)
             num_trials_finished = utils.parse_number_trials_done(
                 it.get_parent_folder(total_args.folder))
@@ -351,7 +349,6 @@ class ZCCKVBench(runner.Experiment):
                                 num_threads,
                                 total_args.load_trace,
                                 total_args.access_trace,
-                                extra_zcc_params.system,
                                 extra_zcc_params,
                                 trial=trial)
                             ret.append(it)

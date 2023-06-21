@@ -23,7 +23,7 @@ ZCC_SYSTEM_NAMES = ["zcc_cornflakes_timestamplru",
         "zcc_cornflakes_mfu",
         "vanilla_cornflakes", 
         "zcc_on_demand"]
-MAX_PINNING_BUDGET=10000
+MAX_PINNING_BUDGET=64000
 DEFAULT_SEGMENT_SIZE=16
 DEFAULT_PINNING_FREQUENCY=1000
 
@@ -43,7 +43,7 @@ def extend_with_zcc_parameters(parser):
             type=int,
             help="Zcc pinning budget in 2mb multiples.",
             required=True)
-    parser.add_argument("-zcc_segment_size",
+    parser.add_argument("--zcc_segment_size",
             dest="zcc_segment_size",
             type=int,
             help="Zcc segment size in 2mb multiples.",
@@ -69,7 +69,7 @@ class ExtraZccParameters(object):
         ## initialize default cornflakes parameters
         self.extra_serialization_params = ExtraSerializationParameters(
                 "cornflakes-dynamic",
-                "objectheader",
+                "hybridarenaobject",
                 "nothing",
                 32,
                 512
@@ -81,7 +81,11 @@ class ExtraZccParameters(object):
             self.zcc_pin_on_demand =False
             self.zcc_alg = "noalg"
             self.zcc_pinning_limit = MAX_PINNING_BUDGET
-            self.zcc_segment_size = DEFAULT_SEGMENT_SIZE
+            if zcc_segment_size is not None:
+                self.zcc_segment_size = zcc_segment_size
+            else:
+                utils.error("Must provide non-null value for zcc_segment_size")
+                exit(1)
             ## for this version, pinning frequency doesn't matter
             self.zcc_pinning_frequency=DEFAULT_PINNING_FREQUENCY
         elif system == "zcc_on_demand":
@@ -147,12 +151,12 @@ class ExtraZccParameters(object):
             ret["num_pages_per_mempool"] = self.num_pages_per_mempool
             ret["do_not_register_at_start"] = ""
             if not(self.register_at_start):
-                ret["do_not_register_at_start"] = "--do_not_register_at_start"
+                ret["do_not_register_at_start"] = " --dont_register_at_start"
             ret["zcc_pinning_limit_2mb_pages"] = self.zcc_pinning_limit
             ret["zcc_segment_size_2mb_pages"] = self.zcc_segment_size
             ret["zcc_pin_on_demand"] = ""
             if self.zcc_pin_on_demand:
-                ret["zcc_pin_on_demand"] = "--zcc_pin_on_demand"
+                ret["zcc_pin_on_demand"] = " --zcc_pin_on_demand"
             ret["zcc_sleep_duration"] = self.zcc_pinning_frequency
             ret["zcc_alg"] = self.zcc_alg
 
