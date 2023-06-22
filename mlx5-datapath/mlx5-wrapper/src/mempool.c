@@ -159,6 +159,23 @@ static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m) {
 	return 0;
 }
 
+int custom_mlx5_mempool_pin(struct custom_mlx5_mempool *m) {
+    if (m->buf != NULL) {
+        return mlock(m->buf, m->len);
+    } else {
+        return -EINVAL;
+    }
+}
+
+int custom_mlx5_mempool_unpin(struct custom_mlx5_mempool *m) {
+    if (m->buf != NULL) {
+        return munlock(m->buf, m->len);
+    } else {
+        return -EINVAL;
+    }
+}
+
+
 /**
  * mempool_create - initializes a memory pool
  * @m: the memory pool to initialize
@@ -169,25 +186,29 @@ static int custom_mlx5_mempool_populate(struct custom_mlx5_mempool *m) {
 int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m, size_t len,
 		   size_t pgsize, size_t item_len, size_t registration_unit, uint32_t use_atomic_ops)
 {
+    size_t allocated_len = len + 2 * PGSIZE_2MB; // 4 additional MB (1 hugepage per side)
+
 	if (item_len == 0 || !is_power_of_two(pgsize) || len % pgsize != 0) {
         NETPERF_WARN("Invalid params to create mempool.");
 		return -EINVAL;
 	}
 
-    void *buf = custom_mlx5_mem_map_anom(NULL, len, pgsize, 0);
-    if (buf ==  NULL) {
+    void *allocated_buf = custom_mlx5_mem_map_anom(NULL, allocated_len, pgsize, 0);
+    if (allocated_buf ==  NULL) {
         NETPERF_WARN("mem_map_anom failed: resulting buffer is null: len %lu, pgsize %lu", len, pgsize);
         return -EINVAL;
     }
 
-    if (buf == MAP_FAILED) {
+    if (allocated_buf == MAP_FAILED) {
         NETPERF_WARN("mem_map_anom failed: resulting buffer is 0xffffffffffffffff; len %lu, pgsize %lu num_pages %lu", len, pgsize, len / pgsize);
         return -EINVAL;
     }
 
     
 	m->allocated = 0;
-	m->buf = buf;
+    m->allocated_buf = allocated_buf;
+    m->allocated_len = allocated_len;
+	m->buf = allocated_buf + ((-(int64_t)allocated_buf) & (PGSIZE_2MB - 1));
 	m->len = len;
 	m->pgsize = pgsize;
     m->num_pages = (len / pgsize);
@@ -196,7 +217,13 @@ int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m, size_t len,
     m->use_atomic_ops = use_atomic_ops;
     m->registration_len = registration_unit;
 
-	return custom_mlx5_mempool_populate(m);
+    // pin the backing memory
+    if (custom_mlx5_mempool_pin(m) != 0) {
+        NETPERF_WARN("Failed to pin mlx5 mempool.");
+        return -EINVAL;
+    }
+
+       return custom_mlx5_mempool_populate(m);
 }
 
 /**
@@ -209,6 +236,6 @@ void custom_mlx5_mempool_destroy(struct custom_mlx5_mempool *m)
 {
 	free(m->free_items);
     free(m->registrations);
-    munmap(m->buf, m->len);
+    munmap(m->allocated_buf, m->allocated_len);
     return;
 }

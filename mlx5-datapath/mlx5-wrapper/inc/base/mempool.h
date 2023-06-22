@@ -22,6 +22,8 @@ struct custom_mlx5_mempool {
     size_t capacity; /* Total capacity of memory pool. */
     void *buf; /* Actual contiguous region of backing data. */
     size_t len; /* Total region length. */
+    void *allocated_buf; /* actual allocated buf start for alignment purposes */
+    size_t allocated_len; /* actual allocated length for aligmnemt purposes (= len + 4MB) */
     size_t pgsize; /* Page size. Using larger pages leads to TLB efficiency. */
     size_t item_len; /* Length of mempool items. Must be aligned to page size. */
     size_t log_item_len; /* Log of the item len*/

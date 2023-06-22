@@ -68,7 +68,7 @@ __custom_mlx5_mem_map_anom(void *base, size_t len, size_t pgsize,
 
 	if (base)
 		flags |= MAP_FIXED;
-
+/*
 	switch (pgsize) {
 	case PGSIZE_4KB:
 		break;
@@ -85,13 +85,18 @@ __custom_mlx5_mem_map_anom(void *base, size_t len, size_t pgsize,
 		//return MAP_FAILED;
 //#endif
 		break;
-	default: /* fail on other sizes */
+	default: // fail on other sizes
 		return MAP_FAILED;
 	}
-
+*/
 	addr = mmap(base, len, PROT_READ | PROT_WRITE, flags, -1, 0);
 	if (addr == MAP_FAILED)
 		return MAP_FAILED;
+
+    printf("got addr %p from mmap\n", addr);
+    if (((int64_t)addr & (0x1FFFFF)) != 0) {
+        NETPERF_WARN("Address not huge page aligned\n");
+    }
 
 	NETPERF_ASSERT(sizeof(unsigned long) * 8 >= NNUMA, "Long size incorrect");
 	if (custom_mlx5_mbind(addr, len, numa_policy, mask ? mask : NULL,

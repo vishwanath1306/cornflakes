@@ -6,7 +6,7 @@ use super::{
     sizes,
 };
 use color_eyre::eyre::{bail, Result};
-use cornflakes_libos::{allocator::DatapathMemoryPool, datapath::Datapath, mem::closest_2mb_page};
+use cornflakes_libos::{allocator::DatapathMemoryPool, datapath::Datapath, mem::closest_4k_page};
 use std::{boxed::Box, marker::PhantomData};
 use zero_copy_cache::data_structures::CacheBuilder;
 
@@ -274,7 +274,7 @@ where
         let registration_unit = unsafe {
             custom_mlx5_mempool_find_registration_unit(
                 self.mempool(),
-                closest_2mb_page(data as *const u8) as *mut ::std::os::raw::c_void,
+                closest_4k_page(data as *const u8) as *mut ::std::os::raw::c_void,
             )
         };
         let lkey = match unsafe { custom_mlx5_mempool_get_lkey(self.mempool(), registration_unit) }
