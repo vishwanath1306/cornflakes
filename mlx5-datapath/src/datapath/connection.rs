@@ -157,10 +157,17 @@ impl DatapathSlab for CornflakesMlx5Slab {
         }
     }
 
-    fn unpin_segment(pinning_state: &mut Self::PinningState) {
+    fn unpin_segment(
+        pinning_state: &mut Self::PinningState,
+        start_address: *mut ::std::os::raw::c_void,
+        len: usize,
+    ) {
         if pinning_state.is_pinned() {
             unsafe {
-                custom_mlx5_deregister_region(pinning_state.get_ibv_mr());
+                custom_mlx5_deregister_region(
+                    start_address as _,
+                    len as _,
+                    pinning_state.get_ibv_mr());
             }
         }
         pinning_state.set_unpinned();

@@ -217,12 +217,13 @@ int custom_mlx5_mempool_create(struct custom_mlx5_mempool *m, size_t len,
     m->use_atomic_ops = use_atomic_ops;
     m->registration_len = registration_unit;
 
+    /*
     // pin the backing memory
     if (custom_mlx5_mempool_pin(m) != 0) {
         NETPERF_WARN("Failed to pin mlx5 mempool.");
         return -EINVAL;
     }
-
+    */
        return custom_mlx5_mempool_populate(m);
 }
 

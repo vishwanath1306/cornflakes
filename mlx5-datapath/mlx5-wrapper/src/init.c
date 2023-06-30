@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 /**********************************************************************/
 // STATIC STATE: symmetric RSS key
@@ -196,6 +197,11 @@ int32_t custom_mlx5_register_region(struct custom_mlx5_global_context *context,
         size_t len,
         struct ibv_mr **mr,
         int registration_flags) {
+    int ret = mlock(starting_address, len);
+    if (ret != 0) {
+        NETPERF_ERROR("Failed to lock memory region %p of len %lu: %s", starting_address, len, strerror(errno));
+        return -errno;
+    }
     *mr = ibv_reg_mr(context->pd, starting_address, len, registration_flags);
     if (*mr == NULL) {
         NETPERF_ERROR("Failed to do memory reg for region %p len %lu: %s", starting_address, len, strerror(errno));
@@ -207,8 +213,16 @@ int32_t custom_mlx5_register_region(struct custom_mlx5_global_context *context,
 /*
  * Unregisters given memory region with the NIC.
  * */
-int custom_mlx5_deregister_region(struct ibv_mr *mr) {
-    int ret = ibv_dereg_mr(mr);
+int custom_mlx5_deregister_region(
+        void* starting_address,
+        size_t len,
+        struct ibv_mr *mr) {
+    int ret = munlock(starting_address, len);
+    if (ret != 0) {
+        NETPERF_ERROR("Failed to unlock memory region %p of length %lu: %s", starting_address, len, strerror(errno));
+        return ret;
+    }
+    ret = ibv_dereg_mr(mr);
     mr = NULL;
     return ret;
 }

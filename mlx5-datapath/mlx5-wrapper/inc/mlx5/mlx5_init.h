@@ -70,7 +70,9 @@ int32_t custom_mlx5_register_region(struct custom_mlx5_global_context *context,
 /*
  * Unregisters given memory region with the NIC.
  * */
-int custom_mlx5_deregister_region(struct ibv_mr *mr);
+int custom_mlx5_deregister_region(void *starting_address,
+        size_t len,
+        struct ibv_mr *mr);
 
 
 /* Unregisters region backing a memory pool, if necessary, and frees memory pool.*/
