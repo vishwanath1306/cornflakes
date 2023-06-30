@@ -22,7 +22,8 @@ ZCC_SYSTEM_NAMES = ["zcc_cornflakes_timestamplru",
         "zcc_cornflakes_linkedlistlru", 
         "zcc_cornflakes_mfu",
         "vanilla_cornflakes", 
-        "zcc_on_demand"]
+        "zcc_on_demand",
+        "cornflakes_copy"]
 MAX_PINNING_BUDGET=64000
 DEFAULT_SEGMENT_SIZE=16
 DEFAULT_PINNING_FREQUENCY=1000
@@ -81,6 +82,26 @@ class ExtraZccParameters(object):
             self.zcc_pin_on_demand =False
             self.zcc_alg = "noalg"
             self.zcc_pinning_limit = MAX_PINNING_BUDGET
+            if zcc_segment_size is not None:
+                self.zcc_segment_size = zcc_segment_size
+            else:
+                utils.error("Must provide non-null value for zcc_segment_size")
+                exit(1)
+            ## for this version, pinning frequency doesn't matter
+            self.zcc_pinning_frequency=DEFAULT_PINNING_FREQUENCY
+        elif system == "cornflakes_copy":
+            self._system = "cornflakes_copy"
+            self.register_at_start=True
+            self.zcc_pin_on_demand =False
+            self.zcc_alg = "noalg"
+            self.zcc_pinning_limit = MAX_PINNING_BUDGET
+            self.extra_serialization_params = ExtraSerializationParameters(
+                "cornflakes1c-dynamic",
+                "hybridarenaobject",
+                "nothing",
+                32,
+                512
+            )
             if zcc_segment_size is not None:
                 self.zcc_segment_size = zcc_segment_size
             else:
