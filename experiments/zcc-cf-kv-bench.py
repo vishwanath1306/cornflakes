@@ -26,6 +26,8 @@ class ZCCYCSBIteration(runner.Iteration):
                 load_trace,
                 access_trace,
                 extra_zcc_params: runner.ExtraZccParameters,
+                log_keys = False,
+                log_pinning_map = False,
                 trial=None):
         self.avg_size = avg_size
         self.client_rates = client_rates
@@ -38,6 +40,8 @@ class ZCCYCSBIteration(runner.Iteration):
         self.access_trace = access_trace
         self.extra_zcc_params = extra_zcc_params
         self.system = extra_zcc_params.system
+        self.log_keys = log_keys
+        self.log_pinning_map = log_pinning_map
     
     def __str__(self):
         return f"system: {self.system}, "\
@@ -199,7 +203,7 @@ class ZCCYCSBIteration(runner.Iteration):
         ret["num_values"] = "{}".format(self.num_values)
         ret["library"] = "cornflakes-dynamic"
         ret["client_library"] = "cornflakes1c-dynamic"
-
+        folder_name = self.get_folder_name(config_yaml["hosts"][host]["tmp_folder"])
         self.extra_zcc_params.fill_in_args(ret, program)
         host_type_map = config_yaml["host_types"]
         server_host = host_type_map["server"][0]
@@ -207,6 +211,13 @@ class ZCCYCSBIteration(runner.Iteration):
             ret["trace"] = self.load_trace
             ret["server_ip"] = config_yaml["hosts"][host]["ip"]
             ret["mode"] = "server"
+            ret["log_keys"] = ""
+            ret["log_pinning_map"] = ""
+            if self.log_keys:
+                # must match what is in experiment yaml
+                ret["log_keys"] = f" --record_key_mappings {folder_name}/{host}_keymappings.log"
+            if self.log_pinning_map:
+                ret["log_pinning_map"] = f" --record_pinning_map {folder_name}/{host}_pinning.log"
         elif program == "start_client":
             ret["queries"] = self.access_trace
             ret["mode"] = "client"
@@ -300,7 +311,10 @@ class ZCCKVBench(runner.Experiment):
                              total_args.num_threads,
                              total_args.load_trace,
                              total_args.access_trace,
-                             extra_zcc_params)
+                             extra_zcc_params,
+                             log_keys=total_args.log_keys,
+                             log_pinning_map=total_args.log_pinning_map
+                             )
             num_trials_finished = utils.parse_number_trials_done(
                 it.get_parent_folder(total_args.folder))
             if total_args.analysis_only or total_args.graph_only:
@@ -350,6 +364,8 @@ class ZCCKVBench(runner.Experiment):
                                 total_args.load_trace,
                                 total_args.access_trace,
                                 extra_zcc_params,
+                                log_keys=total_args.log_keys,
+                                log_pinning_map=total_args.log_pinning_map
                                 trial=trial)
                             ret.append(it)
             return ret
@@ -364,6 +380,10 @@ class ZCCKVBench(runner.Experiment):
         parser.add_argument("-qt", "--access_trace",
                             dest="access_trace",
                             required=True)
+        parser.add_argument("--log_keys",
+                            dest="log_keys",
+                            action="store_true",
+                            help = "Whether to log key mappings")
         if namespace.exp_type == "individual":
 
             parser.add_argument("-nt", "--num_threads",

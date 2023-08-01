@@ -412,6 +412,10 @@ def get_basic_args():
                         dest="use_perf",
                         help="Run perf on the server",
                         action="store_true")
+    parser.add_argument("-pinning_map", "--pinning_map",
+                        dest="pinning_map",
+                        help="Log pins and unpins",
+                        action="store_true")
     user_namespace = UserNameSpace()
     parser.parse_known_args(namespace=user_namespace)
     return parser, user_namespace
@@ -1006,7 +1010,6 @@ class Iteration(metaclass=abc.ABCMeta):
                 program_args["time"] = exp_time
                 program_args["random_seed"] = random_seed
                 program_args_map[(program_name, host)] = program_args
-
                 program_cmd = program["start"].format(**program_args)
                 stdout = None
                 stderr = None
