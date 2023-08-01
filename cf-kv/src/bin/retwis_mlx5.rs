@@ -2,6 +2,7 @@ use cf_kv::{
     capnproto::{CapnprotoClient, CapnprotoKVServer},
     cornflakes_dynamic::{CornflakesClient, CornflakesKVServer},
     flatbuffers::{FlatbuffersClient, FlatbuffersKVServer},
+    init_zcc_logging,
     protobuf::{ProtobufClient, ProtobufKVServer},
     retwis::{retwis_keys, RetwisClient, RetwisServerLoader},
     retwis_run_datapath::*,

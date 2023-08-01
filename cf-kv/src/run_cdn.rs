@@ -23,8 +23,9 @@ macro_rules! run_server_cdn(
         connection.set_inline_mode($opt.inline_mode);
         tracing::info!(threshold = $opt.copying_threshold, "Setting zero-copy copying threshold");
         let cdn_server_loader = CdnServerLoader::new($opt.key_size, $opt.max_num_lines);
-        let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), cdn_server_loader, &mut connection, $opt.push_buf_type, false)?;
+        let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), cdn_server_loader, &mut connection, $opt.push_buf_type, false, $opt.record_key_mappings)?;
         kv_server.init(&mut connection)?;
+        init_zcc_logging!($opt, kv_server, connection);
         kv_server.write_ready($opt.ready_file.clone())?;
         if is_baseline {
             kv_server.run_state_machine_baseline(&mut connection)?;
@@ -283,4 +284,11 @@ pub struct CdnOpt {
         default_value = "timestamplru"
     )]
     pub zcc_alg: zero_copy_cache::data_structures::CacheType,
+    #[structopt(long = "record_pinning_map", help = "Whether to record pinning map")]
+    pub record_pinning_map: Option<String>,
+    #[structopt(
+        long = "record_key_mappings",
+        help = "Whether to record the key mappings"
+    )]
+    pub record_key_mappings: Option<String>,
 }

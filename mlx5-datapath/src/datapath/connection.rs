@@ -7,8 +7,8 @@ use cornflakes_libos::{
     allocator::{MemoryPoolAllocator, MempoolID},
     datapath::{
         Datapath, DatapathBufferOps, InlineMode, MetadataOps, ReceivedPkt, ZCC_NO_ALGORITHM,
-        ZCC_PINNING_LIMIT_2MB_PAGES, ZCC_PIN_ON_DEMAND, ZCC_SEGMENT_SIZE_2MB_PAGES,
-        ZCC_SLEEP_DURATION_MILLIS,
+        ZCC_PINNING_LIMIT_2MB_PAGES, ZCC_PIN_ON_DEMAND, ZCC_RECORD_PINNING_MAP,
+        ZCC_SEGMENT_SIZE_2MB_PAGES, ZCC_SLEEP_DURATION_MILLIS,
     },
     dynamic_rcsga_hybrid_hdr::HybridArenaRcSgaHdr,
     dynamic_sga_hdr::SgaHeaderRepr,
@@ -167,7 +167,8 @@ impl DatapathSlab for CornflakesMlx5Slab {
                 custom_mlx5_deregister_region(
                     start_address as _,
                     len as _,
-                    pinning_state.get_ibv_mr());
+                    pinning_state.get_ibv_mr(),
+                );
             }
         }
         pinning_state.set_unpinned();
@@ -2482,6 +2483,7 @@ where
                 unsafe { ZCC_NO_ALGORITHM },
                 unsafe { ZCC_SLEEP_DURATION_MILLIS },
                 zcc_priv_info,
+                unsafe { ZCC_RECORD_PINNING_MAP.clone() },
             )?,
         })
     }
@@ -6130,5 +6132,9 @@ where
                 .expect("Failed to spawn pin unpin thread");
         });
         Ok(())
+    }
+
+    fn recover_zcc_segment(&self, buf: &[u8]) -> Option<(MempoolID, usize)> {
+        self.zero_copy_cache.get_segment_id(buf)
     }
 }

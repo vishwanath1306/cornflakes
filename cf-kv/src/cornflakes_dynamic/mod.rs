@@ -740,17 +740,19 @@ where
         datapath: &mut D,
         push_buf_type: PushBufType,
         use_linked_list: bool,
+        log_key_mappings: Option<String>,
     ) -> Result<Self>
     where
         L: ServerLoadGenerator,
     {
         let (kv, list_kv, linked_list_kv, mempool_ids) =
-            load_generator.new_kv_state(file, datapath, use_linked_list)?;
+            load_generator.new_kv_state(file, datapath, use_linked_list, log_key_mappings)?;
         let mut serializer = CornflakesSerializer::<D>::new(use_linked_list);
         if datapath.get_copying_threshold() == usize::MAX {
             tracing::info!("For serialization cornflakes 1c, setting with copies");
             serializer.set_with_copies();
         }
+
         Ok(CornflakesKVServer {
             kv_server: kv,
             list_kv_server: list_kv,

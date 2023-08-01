@@ -399,12 +399,13 @@ where
         datapath: &mut D,
         push_buf_type: PushBufType,
         use_linked_list: bool,
+        log_key_mappings: Option<String>,
     ) -> Result<Self>
     where
         L: ServerLoadGenerator,
     {
         let (kv, list_kv, linked_list_kv, mempool_ids) =
-            load_generator.new_kv_state(file, datapath, use_linked_list)?;
+            load_generator.new_kv_state(file, datapath, use_linked_list, log_key_mappings)?;
         Ok(CapnprotoKVServer {
             kv_server: kv,
             list_kv_server: list_kv,

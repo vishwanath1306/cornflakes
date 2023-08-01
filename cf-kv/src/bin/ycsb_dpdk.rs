@@ -2,7 +2,7 @@ use cf_kv::{
     capnproto::{CapnprotoClient, CapnprotoKVServer},
     cornflakes_dynamic::{CornflakesClient, CornflakesKVServer},
     flatbuffers::{FlatbuffersClient, FlatbuffersKVServer},
-    init_zcc_pin_and_unpin_thread,
+    init_zcc_logging, init_zcc_pin_and_unpin_thread,
     protobuf::{ProtobufClient, ProtobufKVServer},
     redis::RedisClient,
     run_client, run_server, set_zcc_and_mempool_parameters,

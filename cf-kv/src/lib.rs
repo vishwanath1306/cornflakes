@@ -37,6 +37,7 @@ use cornflakes_libos::{
     utils::AddressInfo,
     MsgID,
 };
+use csv::Writer;
 use hashbrown::HashMap;
 use std::{
     fs::File,
@@ -502,6 +503,100 @@ where
 pub trait ServerLoadGenerator {
     type RequestLine: Clone + std::fmt::Debug + PartialEq + Eq;
 
+    fn record_key_mappings<D>(
+        &self,
+        file: String,
+        conn: &D,
+        kv_server: &KVServer<D>,
+        list_kv_server: &ListKVServer<D>,
+        linked_list_kv_server: &LinkedListKVServer<D>,
+    ) -> Result<()>
+    where
+        D: Datapath,
+    {
+        // optional implementation to record initial mappings of keys->segment allocations
+        // four csv entries: key, sgentry_idx, mempool ID, mempool segment
+        let mut wtr = Writer::from_path(file)?;
+        wtr.write_record(&["key", "val_idx", "mempool_id", "seg_id"])?;
+        let kv_keys = kv_server.keys();
+        for key in kv_keys.iter() {
+            if let Some(val) = kv_server.get(key.as_str()) {
+                match conn.recover_zcc_segment(val.as_ref()) {
+                    Some((mempool_id, seg_id)) => {
+                        wtr.write_record(&[
+                            key.as_str(),
+                            "0",
+                            format!("{}", mempool_id).as_str(),
+                            format!("{}", seg_id).as_str(),
+                        ])?;
+                    }
+                    None => {
+                        tracing::warn!(
+                            "Could not recover zcc segment for (kv) key {:?}, val addr {:?}",
+                            key.as_str(),
+                            val.as_ref()
+                        );
+                    }
+                }
+            }
+        }
+
+        let list_kv_keys = list_kv_server.keys();
+        for key in list_kv_keys.iter() {
+            if let Some(values) = list_kv_server.get(key.as_str()) {
+                for (i, val) in values.iter().enumerate() {
+                    match conn.recover_zcc_segment(val.as_ref()) {
+                        Some((mempool_id, seg_id)) => {
+                            wtr.write_record(&[
+                                key.as_str(),
+                                format!("{}", i).as_str(),
+                                format!("{}", mempool_id).as_str(),
+                                format!("{}", seg_id).as_str(),
+                            ])?;
+                        }
+                        None => {
+                            tracing::warn!(
+                                "Could not recover zcc segment for (list kv) key {:?}, val addr {:?} idx: {}",
+                                key.as_str(),
+                                val.as_ref(),
+                                i
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let linked_list_kv_keys = linked_list_kv_server.keys();
+        for key in linked_list_kv_keys.iter() {
+            let mut ll_val_option = linked_list_kv_server.get(key.as_str());
+            let mut idx = 0;
+            while let Some(val) = ll_val_option {
+                match conn.recover_zcc_segment(val.as_ref().as_ref()) {
+                    Some((mempool_id, seg_id)) => {
+                        wtr.write_record(&[
+                            key.as_str(),
+                            format!("{}", idx).as_str(),
+                            format!("{}", mempool_id).as_str(),
+                            format!("{}", seg_id).as_str(),
+                        ])?;
+                    }
+                    None => {
+                        tracing::warn!(
+                            "Could not recover zcc segment for (linked list kv) key {:?}, val addr {:?}, idx: {}",
+                            key.as_str(),
+                            val.as_ref().as_ref(),
+                            idx
+                        );
+                    }
+                }
+                ll_val_option = val.get_next();
+                idx += 1;
+            }
+        }
+
+        Ok(())
+    }
+
     fn new_ref_kv_state(
         &self,
         file: &str,
@@ -517,6 +612,7 @@ pub trait ServerLoadGenerator {
         file: &str,
         datapath: &mut D,
         use_linked_list_kv: bool,
+        log_key_mappings: Option<String>,
     ) -> Result<(
         KVServer<D>,
         ListKVServer<D>,
@@ -539,6 +635,17 @@ pub trait ServerLoadGenerator {
             datapath,
             use_linked_list_kv,
         )?;
+
+        if let Some(file) = log_key_mappings {
+            tracing::info!(file = file, "Writing value segment mappings to file");
+            self.record_key_mappings(
+                file,
+                datapath,
+                &kv_server,
+                &list_kv_server,
+                &linked_list_kv_server,
+            )?;
+        }
 
         datapath.allocate_fallback_mempools(
             &mut mempool_ids,

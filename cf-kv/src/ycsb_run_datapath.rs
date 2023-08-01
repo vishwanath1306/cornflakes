@@ -25,8 +25,9 @@ macro_rules! run_server(
         tracing::info!(threshold = $opt.copying_threshold.thresh(), "Setting zero-copy copying threshold");
         // init ycsb load generator
         let load_generator = YCSBServerLoader::new($opt.value_size_generator, $opt.num_values, $opt.num_keys, $opt.allocate_contiguously, $opt.use_linked_list);
-        let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), load_generator, &mut connection, $opt.push_buf_type, $opt.use_linked_list)?;
+        let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), load_generator, &mut connection, $opt.push_buf_type, $opt.use_linked_list, $opt.record_key_mappings)?;
         kv_server.init(&mut connection)?;
+        init_zcc_logging!($opt, kv_server, connection);
         kv_server.write_ready($opt.ready_file.clone())?;
         if is_baseline {
             kv_server.run_state_machine_baseline(&mut connection)?;
@@ -324,4 +325,11 @@ pub struct YCSBOpt {
         default_value = "timestamplru"
     )]
     pub zcc_alg: zero_copy_cache::data_structures::CacheType,
+    #[structopt(
+        long = "record_key_mappings",
+        help = "Whether to record key->segment mappings"
+    )]
+    pub record_key_mappings: Option<String>,
+    #[structopt(long = "record_pinning_map", help = "Whether to record pinning map")]
+    pub record_pinning_map: Option<String>,
 }

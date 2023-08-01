@@ -26,8 +26,9 @@ macro_rules! run_server_retwis(
 
         // init retwis load generator
         let load_generator = RetwisServerLoader::new($opt.num_keys, $opt.key_size, $opt.value_size_generator);
-        let mut kv_server = <$kv_server>::new("", load_generator, &mut connection, $opt.push_buf_type, false)?;
+        let mut kv_server = <$kv_server>::new("", load_generator, &mut connection, $opt.push_buf_type, false, None)?;
         kv_server.init(&mut connection)?;
+        init_zcc_logging!($opt, kv_server, connection);
         kv_server.write_ready($opt.ready_file.clone())?;
         if is_baseline {
             kv_server.run_state_machine_baseline(&mut connection)?;
@@ -304,4 +305,6 @@ pub struct RetwisOpt {
         default_value = "timestamplru"
     )]
     pub zcc_alg: zero_copy_cache::data_structures::CacheType,
+    #[structopt(long = "record_pinning_map", help = "Whether to record pinning map")]
+    pub record_pinning_map: Option<String>,
 }

@@ -5,6 +5,7 @@ use cf_kv::{
     google_protobuf::{
         default_buckets, GoogleProtobufClient, GoogleProtobufServerLoader, ValueSizeDistribution,
     },
+    init_zcc_logging,
     protobuf::{ProtobufClient, ProtobufKVServer},
     run_client_google,
     run_google_protobuf::*,

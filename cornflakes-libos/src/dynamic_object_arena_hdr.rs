@@ -446,7 +446,6 @@ where
                     let mut arr =
                         bumpalo::collections::Vec::with_capacity_zeroed_in(ptr.len(), arena);
                     arr.copy_from_slice(ptr);
-                    println!("Copied buffer due to no metadada for buffer address");
                     Ok(CFBytes::Copied(arr))
                 }
             }

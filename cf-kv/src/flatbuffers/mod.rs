@@ -405,12 +405,13 @@ where
         datapath: &mut D,
         push_buf_type: PushBufType,
         use_linked_list_kv: bool,
+        log_key_mappings: Option<String>,
     ) -> Result<Self>
     where
         L: ServerLoadGenerator,
     {
         let (kv, list_kv, linked_list_kv, mempool_ids) =
-            load_generator.new_kv_state(file, datapath, use_linked_list_kv)?;
+            load_generator.new_kv_state(file, datapath, use_linked_list_kv, log_key_mappings)?;
         Ok(FlatbuffersKVServer {
             kv_server: kv,
             list_kv_server: list_kv,

@@ -23,8 +23,10 @@ macro_rules! run_server_twitter(
         connection.set_inline_mode($opt.inline_mode);
         tracing::info!(threshold = $opt.copying_threshold, "Setting zero-copy copying threshold");
         let twitter_server_loader = TwitterServerLoader::new($opt.total_time, $opt.min_num_keys, $opt.value_size.clone());
-        let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), twitter_server_loader, &mut connection, $opt.push_buf_type, false)?;
+        let record_opt: Option<String> = None;
+        let mut kv_server = <$kv_server>::new($opt.trace_file.as_str(), twitter_server_loader, &mut connection, $opt.push_buf_type, false, record_opt)?;
         kv_server.init(&mut connection)?;
+        init_zcc_logging!($opt, kv_server, connection);
         kv_server.write_ready($opt.ready_file.clone())?;
         if is_baseline {
             kv_server.run_state_machine_baseline(&mut connection)?;
@@ -290,4 +292,6 @@ pub struct TwitterOpt {
         default_value = "timestamplru"
     )]
     pub zcc_alg: zero_copy_cache::data_structures::CacheType,
+    #[structopt(long = "record_pinning_map", help = "Whether to record pinning map")]
+    pub record_pinning_map: Option<String>,
 }

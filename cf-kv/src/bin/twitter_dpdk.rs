@@ -2,6 +2,7 @@ use cf_kv::{
     capnproto::{CapnprotoClient, CapnprotoKVServer},
     cornflakes_dynamic::{CornflakesClient, CornflakesKVServer},
     flatbuffers::{FlatbuffersClient, FlatbuffersKVServer},
+    init_zcc_logging,
     protobuf::{ProtobufClient, ProtobufKVServer},
     redis::RedisClient,
     run_client_twitter, run_server_twitter,

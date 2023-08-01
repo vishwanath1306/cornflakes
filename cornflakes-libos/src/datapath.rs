@@ -30,6 +30,7 @@ pub static mut ZCC_SEGMENT_SIZE_2MB_PAGES: usize = 8;
 pub static mut ZCC_PIN_ON_DEMAND: bool = false;
 pub static mut ZCC_SLEEP_DURATION_MILLIS: Duration = Duration::from_millis(1000);
 pub static mut ZCC_NO_ALGORITHM: bool = true;
+pub static mut ZCC_RECORD_PINNING_MAP: Option<String> = None;
 
 pub fn set_zcc_params(
     zcc_pinning_limit_2mb_pages: usize,
@@ -37,6 +38,7 @@ pub fn set_zcc_params(
     zcc_alg: zero_copy_cache::data_structures::CacheType,
     zcc_pin_on_demand: bool,
     zcc_sleep_duration_millis: u64,
+    zcc_record_pinning_map: Option<String>,
 ) -> Result<()> {
     tracing::info!(
         pinning_limit = zcc_pinning_limit_2mb_pages,
@@ -44,6 +46,7 @@ pub fn set_zcc_params(
         modval = zcc_pinning_limit_2mb_pages % zcc_segment_size_2mb_pages,
         zcc_pin_on_demand = zcc_pin_on_demand,
         sleep_duration = zcc_sleep_duration_millis,
+        record_pinning_map =? zcc_record_pinning_map,
         "Params"
     );
     color_eyre::eyre::ensure!(zcc_pinning_limit_2mb_pages > 0 && zcc_segment_size_2mb_pages > 0 && zcc_pinning_limit_2mb_pages >= zcc_segment_size_2mb_pages && zcc_pinning_limit_2mb_pages % zcc_segment_size_2mb_pages == 0, "Pinning limit and segment size must be greater than 0, pinning limit must be greater than and a multiple of the segment size");
@@ -52,6 +55,7 @@ pub fn set_zcc_params(
         ZCC_SEGMENT_SIZE_2MB_PAGES = zcc_segment_size_2mb_pages;
         ZCC_PIN_ON_DEMAND = zcc_pin_on_demand;
         ZCC_SLEEP_DURATION_MILLIS = Duration::from_millis(zcc_sleep_duration_millis);
+        ZCC_RECORD_PINNING_MAP = zcc_record_pinning_map;
 
         if zcc_alg == zero_copy_cache::data_structures::CacheType::NoAlg {
             ZCC_NO_ALGORITHM = true;
@@ -644,6 +648,14 @@ pub trait Datapath {
     /// Args:
     /// @buf: Buffer.
     fn recover_metadata(&self, buf: &[u8]) -> Result<Option<Self::DatapathMetadata>>;
+
+    /// Recovers the zero-copy cache data associated with a buffer, if it was allocated by the
+    /// pinned allocator.
+    /// Args:
+    /// @buf: Buffer to recover
+    fn recover_zcc_segment(&self, _buf: &[u8]) -> Option<(MempoolID, usize)> {
+        unimplemented!();
+    }
 
     fn recover_metadata_if_pinned_and_insert_into_zero_copy_cache(
         &mut self,
