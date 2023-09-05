@@ -49,7 +49,7 @@ def extend_with_zcc_parameters(parser):
             type=int,
             help="Zcc segment size in 2mb multiples.",
             required=True)
-    parser.add_argument("-zcc_register_at_start",
+    parser.add_argument("--zcc_register_at_start",
             dest="zcc_register_at_start",
             type=bool,
             help="Whether memory is registered at start")
@@ -1194,7 +1194,8 @@ class Iteration(metaclass=abc.ABCMeta):
                             remote_file = filename.format(**program_args)
                             program_args_copy["folder"] = local_results_path
                             local_file = filename.format(**program_args_copy)
-                            connections[host].get(remote_file, local_file)
+                            if connections[host].file_exists(remote_file):
+                                connections[host].get(remote_file, local_file)
 
         # delete all files, even if stuff has failed
         for host in program_host_list:

@@ -365,7 +365,7 @@ class ZCCKVBench(runner.Experiment):
                                 total_args.access_trace,
                                 extra_zcc_params,
                                 log_keys=total_args.log_keys,
-                                log_pinning_map=total_args.log_pinning_map
+                                log_pinning_map=total_args.log_pinning_map,
                                 trial=trial)
                             ret.append(it)
             return ret
@@ -384,6 +384,10 @@ class ZCCKVBench(runner.Experiment):
                             dest="log_keys",
                             action="store_true",
                             help = "Whether to log key mappings")
+        parser.add_argument("--log_pinning_map",
+                            dest="log_pinning_map",
+                            action="store_true",
+                            help = "Whether to log the pinning map at each epoch.")
         if namespace.exp_type == "individual":
 
             parser.add_argument("-nt", "--num_threads",
