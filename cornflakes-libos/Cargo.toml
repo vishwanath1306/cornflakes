@@ -30,7 +30,7 @@ itertools = "0.10.2"
 bitmaps = "3.2.0"
 bumpalo = { git = "https://github.com/deeptir18/bumpalo", features = ["collections"] }
 ahash = "0.7.6"
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = " 6e6bd473a517f9bfbd1408adfa125381a5ecfb47"}
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "6e6bd473a517f9bfbd1408adfa125381a5ecfb47"}
 #zero_copy_cache = { path = "../../zero_copy_cache" }
 
 [dev-dependencies]
