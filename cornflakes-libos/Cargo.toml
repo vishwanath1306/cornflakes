@@ -31,7 +31,6 @@ bitmaps = "3.2.0"
 bumpalo = { git = "https://github.com/deeptir18/bumpalo", features = ["collections"] }
 ahash = "0.7.6"
 zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "284c3c55698786add9062aa6096ef6f5bfc5dac4"}
-#zero_copy_cache = { path = "../../zero_copy_cache" }
 
 [dev-dependencies]
 libc = "0.2.81"
