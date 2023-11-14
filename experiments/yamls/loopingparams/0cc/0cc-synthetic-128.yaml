@@ -7,8 +7,8 @@ rate_percentages: [0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.
 size_str: UniformOverSizes-2048
 systems: ["vanilla_cornflakes", "cornflakes_copy", "zcc_cornflakes_mfu"]
 max_rates: 
-    "register_at_start = 1, pinning_limit = 1024, segment_size = 64, pinning_frequency = 1000": 65000
-    "register_at_start = 1, pinning_limit = 512, segment_size = 64, pinning_frequency = 1000": 65000
-    "register_at_start = 1, pinning_limit = 256, segment_size = 64, pinning_frequency = 1000": 65000
-    "register_at_start = 1, pinning_limit = 128, segment_size = 64, pinning_frequency = 1000": 65000
-    "register_at_start = 1, pinning_limit = 64, segment_size = 64, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 1024, segment_size = 128, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 512, segment_size = 128, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 256, segment_size = 128, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 128, segment_size = 128, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 64, segment_size = 128, pinning_frequency = 1000": 65000

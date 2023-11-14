@@ -1,0 +1,14 @@
+num_threads: 16
+num_clients: 1
+num_trials: 1
+num_keys: 1
+num_values: 1
+rate_percentages: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30,  0.350, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00] # Rate percentages for single configuration
+size_str: UniformOverSizes-2048
+systems: ["vanilla_cornflakes", "cornflakes_copy", "zcc_cornflakes_mfu"]
+max_rates: 
+    "register_at_start = 1, pinning_limit = 1024, segment_size = 32, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 512, segment_size = 32, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 256, segment_size = 32, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 128, segment_size = 32, pinning_frequency = 1000": 65000
+    "register_at_start = 1, pinning_limit = 64, segment_size = 32, pinning_frequency = 1000": 65000
