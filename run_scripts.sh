@@ -16,11 +16,12 @@ python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
 
 # Server 
 
-sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu nice -n -19 taskset -c 2 /mydata/cornflakes/target/release/ycsb_mlx5 --config_file /mydata/cornflakes/vish_config.yaml --server_ip 192.168.1.1 --mode server --trace /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.load --debug_level info --value_size UniformOverSizes-2048 --num_values 1 --num_keys 1 --serialization cornflakes-dynamic --push_buf_type hybridarenaobject --inline_mode nothing --copy_threshold 512 --use_linked_list --num_pages 64 --zcc_pinning_limit 64000 --zcc_segment_size 64 --zcc_alg noalg --zcc_sleep_duration 1000
+sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu nice -n -19 taskset -c 2 /mydata/cornflakes/target/release/ycsb_mlx5 --config_file /mydata/cornflakes/vish_config.yaml --server_ip 192.168.1.1 --mode server --trace /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.load --debug_level info --value_size UniformOverSizes-2048 --num_values 1 --num_keys 1 --serialization cornflakes-dynamic --push_buf_type hybridarenaobject --inline_mode nothing --copy_threshold 512 --use_linked_list --num_pages 64 --zcc_pinning_limit 64000 --zcc_segment_size 64 --zcc_alg noalg --zcc_sleep_duration 1000 
 
 # Client 
 
-sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu /mydata/cornflakes/target/release/ycsb_dpdk --config_file /mydata/cornflakes/vish_config.yaml --mode client --queries /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.access --debug_level info --push_buf_type singlebuf --value_size UniformOverSizes-2048 --rate 6250 --serialization cornflakes1c-dynamic --server_ip 192.168.1.1 --our_ip 192.168.1.2 --time 25 --num_values 1 --num_keys 1 --num_threads 16 --num_clients 1 --client_id 0 --use_linked_list
+sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu /mydata/cornflakes/target/release/ycsb_dpdk --config_file /mydata/cornflakes/vish_config.yaml --mode client --queries /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.access --debug_level info --push_buf_type singlebuf --value_size UniformOverSizes-2048 --rate 6250 --serialization cornflakes1c-dynamic --server_ip 192.168.1.1 --our_ip 192.168.1.2 --time 25 --num_values 1 --num_keys 1 --num_threads 16 --num_clients 1 --client_id 0 --use_linked_list 
+
 # == Cornflakes MFU + 1024 PB ==============
 
 
