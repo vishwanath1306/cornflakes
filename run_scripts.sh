@@ -18,11 +18,9 @@ python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
 
 sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu nice -n -19 taskset -c 2 /mydata/cornflakes/target/release/ycsb_mlx5 --config_file /mydata/cornflakes/vish_config.yaml --server_ip 192.168.1.1 --mode server --trace /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.load --debug_level info --value_size UniformOverSizes-2048 --num_values 1 --num_keys 1 --serialization cornflakes-dynamic --push_buf_type hybridarenaobject --inline_mode nothing --copy_threshold 512 --use_linked_list --num_pages 64 --zcc_pinning_limit 64000 --zcc_segment_size 64 --zcc_alg noalg --zcc_sleep_duration 1000
 
-
 # Client 
 
-sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu /mydata/cornflakes/target/release/ycsb_dpdk --config_file /mydata/cornflakes/vish_config.yaml --mode client --queries /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.access --debug_level info --push_buf_type singlebuf --value_size UniformOverSizes-2048 --rate 68750 --serialization cornflakes1c-dynamic --server_ip 192.168.1.1 --our_ip 192.168.1.2 --time 10 --num_values 1 --num_keys 1 --num_threads 16 --num_clients 1 --client_id 0 --use_linked_list
-
+sudo env LD_LIBRARY_PATH=/mydata/cornflakes/dpdk-datapath/3rdparty/dpdk/build/lib/x86_64-linux-gnu /mydata/cornflakes/target/release/ycsb_dpdk --config_file /mydata/cornflakes/vish_config.yaml --mode client --queries /mydata/vishwa/data/ycsb/workloadc-1mil/workloadc-1mil-1-batched.access --debug_level info --push_buf_type singlebuf --value_size UniformOverSizes-2048 --rate 6250 --serialization cornflakes1c-dynamic --server_ip 192.168.1.1 --our_ip 192.168.1.2 --time 25 --num_values 1 --num_keys 1 --num_threads 16 --num_clients 1 --client_id 0 --use_linked_list
 # == Cornflakes MFU + 1024 PB ==============
 
 
@@ -370,17 +368,28 @@ nohup python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
 -ec /mydata/cornflakes/experiments/yamls/cmdlines/0cc/0cc-ycsb.yaml \
 -lt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.load \
 -qt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.access \
--lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/synthetic.yaml &
+-lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/0cc-synthetic-16.yaml &
 
 
-# ======================= 8m HS workload + ZCC KV Looping Params + 32 Segment Size ============
+# ======================= 8m HS workload + ZCC KV Looping Params + 16 Segment Size ============
 
 nohup python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
 -e loop \
--f /mydata//mydata/looping_params_8m_ss32_results \
+-f /mydata/looping_params_8m_ss128_results \
 -c /mydata/cornflakes/vish_config.yaml \
 -ec /mydata/cornflakes/experiments/yamls/cmdlines/0cc/0cc-ycsb.yaml \
 -lt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.load \
 -qt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.access \
--lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/synthetic.yaml &
+-lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/0cc-synthetic-128.yaml &
 
+
+# ======================= 8m HS workload + ZCC KV Looping Params + 128 Segment Size ============
+
+nohup python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
+-e loop \
+-f /mydata/looping_params_8m_ss128_results \
+-c /mydata/cornflakes/vish_config.yaml \
+-ec /mydata/cornflakes/experiments/yamls/cmdlines/0cc/0cc-ycsb.yaml \
+-lt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.load \
+-qt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.access \
+-lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/0cc-synthetic-128.yaml &

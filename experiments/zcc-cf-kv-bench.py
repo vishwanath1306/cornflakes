@@ -339,6 +339,7 @@ class ZCCKVBench(runner.Experiment):
             size_str = utils.yaml_get(loop_yaml, "size_str")
             value_size = utils.parse_cornflakes_size_distr_avg(size_str)
             systems = utils.yaml_get(loop_yaml, "systems")
+            num_pages_per_mempool = utils.yaml_get(loop_yaml, "num_pages_per_mempool")
             max_rates_dict = self.parse_max_rates(utils.yaml_get(loop_yaml, "max_rates"))
 
 
@@ -354,7 +355,8 @@ class ZCCKVBench(runner.Experiment):
                                     zcc_pinning_limit=zcckvexp.pinning_limit,
                                     zcc_segment_size=zcckvexp.segment_size,
                                     register_at_start=zcckvexp.register_at_start,
-                                    zcc_pinning_frequency=zcckvexp.pinning_frequency)
+                                    zcc_pinning_frequency=zcckvexp.pinning_frequency,
+                                    num_pages_per_mempool=num_pages_per_mempool)
                             it = ZCCYCSBIteration(client_rates,
                                 value_size,
                                 size_str,
