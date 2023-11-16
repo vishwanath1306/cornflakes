@@ -18,7 +18,7 @@ hashbrown = "0.11.*"
 bytes = "1.1.0"
 byteorder = "1.3.4"
 protobuf = "3.0.3"
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "284c3c55698786add9062aa6096ef6f5bfc5dac4"}
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "b2890719823d98cfc86be12d7b69933fb47be763"}
 
 [build-dependencies]
 bindgen = "0.60.1" 

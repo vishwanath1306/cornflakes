@@ -416,3 +416,14 @@ nohup python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
 -lt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.load \
 -qt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.access \
 -lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/0cc-synthetic-512.yaml &
+
+# ======================= 8m HS workload + ZCC KV Looping Params + 1024 Segment Size ============
+
+nohup python3 /mydata/cornflakes/experiments/zcc-cf-kv-bench.py \
+-e loop \
+-f /mydata/looping_params_8m_ss1024_results \
+-c /mydata/cornflakes/vish_config.yaml \
+-ec /mydata/cornflakes/experiments/yamls/cmdlines/0cc/0cc-ycsb.yaml \
+-lt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.load \
+-qt /proj/demeter-PG0/vish/vish_8m_hs/vish_8m_hs-1-batched.access \
+-lc /mydata/cornflakes/experiments/yamls/loopingparams/0cc/0cc-synthetic-1024.yaml &
