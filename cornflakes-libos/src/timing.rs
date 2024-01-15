@@ -88,8 +88,12 @@ impl SizedManualHistogram {
 pub struct ManualHistogram {
     current_count: usize,
     latencies: Vec<u64>,
+    latency_per_second: HashMap<u32, Vec<u64>>,
     sorted_latencies: Vec<u64>,
     is_sorted: bool,
+    last_record_time: Instant, 
+    last_index: u32,
+    last_latencies: Vec<u64>,
 }
 
 impl ManualHistogram {
@@ -97,16 +101,24 @@ impl ManualHistogram {
         ManualHistogram {
             current_count: latencies.len(),
             latencies: latencies,
+            latency_per_second: HashMap::new(),
             sorted_latencies: Vec::default(),
             is_sorted: false,
+            last_record_time: Instant::now(),
+            last_index: 0,
+            last_latencies: Vec::new(),
         }
     }
     pub fn new(num_values: usize) -> Self {
         ManualHistogram {
             current_count: 0,
             latencies: vec![0u64; num_values as usize],
+            latency_per_second: HashMap::new(),
             sorted_latencies: Vec::default(),
             is_sorted: false,
+            last_record_time: Instant::now(),
+            last_index: 0,
+            last_latencies: Vec::new(),
         }
     }
 
@@ -120,8 +132,12 @@ impl ManualHistogram {
         ManualHistogram {
             current_count: 0,
             latencies: vec![0u64; num_values],
+            latency_per_second: HashMap::new(),
             sorted_latencies: Vec::default(),
             is_sorted: false,
+            last_record_time: Instant::now(),
+            last_index: 0,
+            last_latencies: Vec::new(),
         }
     }
 
@@ -130,6 +146,31 @@ impl ManualHistogram {
     }
 
     pub fn record(&mut self, val: u64) {
+
+
+        let elapsed = (Instant::now() - self.last_record_time).as_secs();
+        if !self.latency_per_second.is_empty(){
+            if elapsed > 2 {
+                self.latency_per_second.insert(
+                    self.last_index + 1, 
+                    self.last_latencies.clone());
+                self.last_index += 1;
+                self.last_latencies = [].to_vec();
+            }
+
+            self.last_latencies.push(val);
+        }else{ 
+            
+            if elapsed > 2{
+                self.latency_per_second.insert(self.last_index + 1, 
+                    self.last_latencies.clone());
+                self.last_index += 1;
+                self.last_latencies = [].to_vec();
+            }
+            self.last_latencies.push(val);
+            
+        }
+
         if self.current_count == self.latencies.len() {
             self.latencies.push(val);
         } else {
