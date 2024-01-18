@@ -2,8 +2,11 @@ use crate::timing::SizedManualHistogram;
 
 use super::super::timing::ManualHistogram;
 use color_eyre::eyre::{bail, Result};
+use itertools::Itertools;
+use protobuf::well_known_types::struct_::value;
 use serde::{Deserialize, Serialize};
 use serde_json::to_writer;
+use yaml_rust::yaml::Hash;
 use std::{
     collections::{BTreeMap, HashMap},
     fs::File,
@@ -295,6 +298,7 @@ pub struct MeasuredThreadStatsOnly {
     pub summary_histogram: SummaryHistogram,
     pub thread_latencies: ThreadLatencies,
     pub sized_histogram: HashMap<usize, (SummaryHistogram, ThreadLatencies)>,
+    pub latency_bucketed: HashMap<u32, Vec<u64>>,
 }
 
 impl MeasuredThreadStatsOnly {
@@ -310,6 +314,12 @@ impl MeasuredThreadStatsOnly {
     ) -> Result<Self> {
         let achieved_load_pps_sent = num_sent as f64 / (runtime / NANOS_IN_SEC);
         let achieved_load_pps_rcvd = num_received as f64 / (runtime / NANOS_IN_SEC);
+
+        let temp_latency = rtts.get_latency_per_second();
+        let mut new_latency_value: HashMap<u32, Vec<u64>> = HashMap::new();
+        for (key, value) in temp_latency{
+            new_latency_value.insert(key, value);
+        }
 
         if !rtts.is_sorted() {
             rtts.sort_and_truncate(cutoff_size)?;
@@ -338,6 +348,7 @@ impl MeasuredThreadStatsOnly {
             summary_histogram,
             thread_latencies,
             sized_histogram: sized_map,
+            latency_bucketed: new_latency_value
         })
     }
 
@@ -355,6 +366,14 @@ impl MeasuredThreadStatsOnly {
         self.thread_latencies.dump(self.thread_id);
         for (bucket, (_, latencies)) in self.sized_histogram.iter() {
             latencies.dump_with_size(self.thread_id, *bucket);
+        }
+    }
+
+    pub fn dump_latency_bucketed(&self){
+
+        for key in self.latency_bucketed.keys().sorted(){
+            tracing::info!("Bucketed Latencies -- Thread ID: {}, Time Interval: {}, Latencies: {:?}",
+            self.thread_id, key, self.latency_bucketed[key]);
         }
     }
 
@@ -404,6 +423,7 @@ impl std::ops::Add for MeasuredThreadStatsOnly {
             summary_histogram: histogram,
             thread_latencies: latencies,
             sized_histogram: self.sized_histogram,
+            latency_bucketed: self.latency_bucketed
         }
     }
 }
@@ -421,6 +441,7 @@ pub struct ThreadStats {
     pub achieved_load_gbps: f64,
     pub summary_histogram: SummaryHistogram,
     pub summary_latencies: ThreadLatencies,
+    pub latency_bucketed: HashMap<u32, Vec<u64>>,
 }
 
 impl ThreadStats {
@@ -443,6 +464,12 @@ impl ThreadStats {
             hist.sort_and_truncate(cutoff_size)?;
         }
 
+        let temp_latency = hist.get_latency_per_second();
+        let mut new_latency_value: HashMap<u32, Vec<u64>> = HashMap::new();
+        for (key, value) in temp_latency{
+            new_latency_value.insert(key, value);
+        }
+
         let summary_hist = hist.summary_histogram();
         let summary_latencies = summary_hist.get_summary_latencies()?;
 
@@ -458,6 +485,7 @@ impl ThreadStats {
             achieved_load_gbps: achieved_load_gbps,
             summary_histogram: summary_hist,
             summary_latencies: summary_latencies,
+            latency_bucketed: new_latency_value
         })
     }
 
@@ -476,6 +504,13 @@ impl ThreadStats {
             "thread {} summary stats", self.thread_id
         );
         self.summary_latencies.dump(self.thread_id);
+    }
+
+    pub fn dump_latency_bucketed(&self){
+        for key in self.latency_bucketed.keys().sorted(){
+            tracing::info!("Bucketed Latencies -- Thread ID: {}, Time Interval: {}, Latencies: {:?}",
+            self.thread_id, key, self.latency_bucketed[key]);
+        }
     }
 
     pub fn clear_summary_histogram(&mut self) {
@@ -505,6 +540,7 @@ impl std::ops::Add for ThreadStats {
             achieved_load_gbps: self.achieved_load_gbps + other.achieved_load_gbps,
             summary_histogram: histogram,
             summary_latencies: latencies,
+            latency_bucketed: self.latency_bucketed
         }
     }
 }
@@ -575,6 +611,12 @@ pub fn dump_measured_thread_stats(
     tracing::warn!("About to print out stats for all threads");
 
     mega_info.dump();
+
+    tracing::warn!("About to print out the latency per second stats");
+    for stats in info.iter(){
+        stats.dump_latency_bucketed();
+    }
+    
     Ok(())
 }
 
@@ -603,5 +645,10 @@ pub fn dump_thread_stats(
     tracing::warn!("About to print out stats for all threads");
 
     mega_info.dump();
+
+    tracing::warn!("About to print out the latency per second stats");
+    for stats in info.iter(){
+        stats.dump_latency_bucketed();
+    }
     Ok(())
 }

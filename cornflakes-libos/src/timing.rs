@@ -147,8 +147,8 @@ impl ManualHistogram {
 
     pub fn record(&mut self, val: u64) {
 
-
-        let elapsed = (Instant::now() - self.last_record_time).as_secs();
+        let curr_time = Instant::now();
+        let elapsed = (curr_time - self.last_record_time).as_secs();
         if !self.latency_per_second.is_empty(){
             if elapsed > 2 {
                 self.latency_per_second.insert(
@@ -156,6 +156,7 @@ impl ManualHistogram {
                     self.last_latencies.clone());
                 self.last_index += 1;
                 self.last_latencies = [].to_vec();
+                self.last_record_time = curr_time;
             }
 
             self.last_latencies.push(val);
@@ -166,6 +167,7 @@ impl ManualHistogram {
                     self.last_latencies.clone());
                 self.last_index += 1;
                 self.last_latencies = [].to_vec();
+                self.last_record_time = curr_time;
             }
             self.last_latencies.push(val);
             
@@ -177,6 +179,10 @@ impl ManualHistogram {
             self.latencies[self.current_count] = val;
         }
         self.current_count += 1;
+    }
+
+    pub fn get_latency_per_second(&self) -> HashMap<u32, Vec<u64>>{
+        return self.latency_per_second.clone();
     }
 
     pub fn sort(&mut self) -> Result<()> {
