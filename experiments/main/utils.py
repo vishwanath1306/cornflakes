@@ -126,7 +126,29 @@ class Histogram(object):
         raise Exception("unreachable")
 
 
+class SummaryLatencies(object):
+    
+    def __init__(self,) -> None:
+        self.bucketed_latency = {}
+        self._count = 0
+        self._merged = False
+        self._system_name = ""
+        self._segment_size = 0
+        self._pinning_limit = 0
+        self.offered_load_gbps = 0
 
+    
+    def print_latency(self):
+        print(self.bucketed_latency)
+
+    def merge_into_bucket(self, new_dir):
+        for time_slice in new_dir.keys():
+            if time_slice not in self.bucketed_latency.keys():
+                self.bucketed_latency[time_slice] = []
+            self.bucketed_latency[time_slice].extend(new_dir[time_slice])
+    
+    def get_bucket(self):
+        return self.bucketed_latency
 
 
 def read_threads_json(json_file, thread_id):

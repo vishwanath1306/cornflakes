@@ -4,6 +4,7 @@ import abc
 import yaml
 import argparse
 import os
+import json
 from main import utils
 from pathlib import Path
 import multiprocessing as mp
@@ -829,11 +830,14 @@ class Iteration(metaclass=abc.ABCMeta):
 
             # count packets sent and received
             threads_map = yaml_map[1]
+            latency_buckets = utils.SummaryLatencies()
             for thread, thread_info in threads_map.items():
                 packets_sent += thread_info["num_sent"]
                 packets_received += thread_info["num_received"]
                 thread_runtime = thread_info["runtime"]
                 max_runtime = max(thread_runtime, max_runtime)
+                latency_buckets.merge_into_bucket(thread_info["latency_bucketed"])
+
 
         # calculate full statistics
         achieved_load_pps = float(packets_received) / max_runtime
@@ -867,6 +871,26 @@ class Iteration(metaclass=abc.ABCMeta):
                 self.get_csv_header()]
         format_string = ",".join(format_string_params)
         format_string = format_string.format(**iteration_params)
+
+        # Writing latency buckets to JSON file 
+
+        latency_buckets_folder = Path(local_folder) / "latency_buckets.json"
+        
+        writing_json = {
+            "latency_buckets": latency_buckets.get_bucket(),
+            "achievable_load_pps": achieved_load_pps,
+            "offered_load_pps": offered_load_pps,
+            "system": iteration_params["system"],
+            "load_trace": iteration_params["load_trace"],
+            "access_trace": iteration_params["access_trace"],
+            "segment_size": iteration_params["segment_size_2mb_pages"],
+            "pinning_limit": iteration_params["pinning_limit_2mb_pages"],
+            "num_threads": iteration_params["num_threads"]
+        }
+
+        with open(str(latency_buckets_folder), "w") as f:
+            json.dump(writing_json, f)
+            f.close()
 
         analysis_path = Path(local_folder) / "analysis.log"
         with open(str(analysis_path), "w") as f:
