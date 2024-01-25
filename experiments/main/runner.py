@@ -542,12 +542,16 @@ class Experiment(metaclass=abc.ABCMeta):
             return
 
         df = pd.DataFrame(columns = csv_header)
+        bucketed_latency_dict_list = []
         for iteration in iterations:
             analysis_path = iteration.get_folder_name(folder_path) /\
                 "analysis.log"
             skipped = iteration.get_folder_name(folder_path) /\
                 "skipped.log"
             ret = ""
+            latency_bucket = iteration.get_folder_name(folder_path) /\
+                "latency_buckets.json"
+            
             if (os.path.exists(skipped)):
                 continue
             if not(os.path.exists(analysis_path)):
@@ -581,8 +585,16 @@ class Experiment(metaclass=abc.ABCMeta):
             
             iteration_df = iteration.read_analysis_log(folder_path)
             df = pd.concat([df, iteration_df], ignore_index = True)
+            with open(str(latency_bucket), "r") as f:
+                bucketed_latency_dict_list.append(json.load(f))
+                f.close()
         # write to logfile
         df.to_csv(str(folder_path/logfile))
+        # write to bucketed latency file
+        bucketed_latency_file = f"{folder_path/logfile}_bucketed_latency.json"
+        with open(bucketed_latency_file, "w") as f:
+            json.dump(bucketed_latency_dict_list, f)
+            f.close()
 
     def run_iterations(self, total_args, iterations, print_stats=False):
         """
