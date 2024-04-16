@@ -36,7 +36,8 @@ redis = "0.21.5"
 zipf = "7.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.*"
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "b2890719823d98cfc86be12d7b69933fb47be763"}
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "0e8b3ad28d56581558acfc8c1285cd357b0bb76a"}
+#zero_copy_cache = { path = "../../zero_copy_cache" }
 
 [build-dependencies]
 protobuf-codegen = "3.0.3"
@@ -55,6 +56,7 @@ dpdk = ["dpdk-datapath"]
 ice = ["ice-datapath"]
 mlx5 = ["dpdk-datapath/mlx5", "mlx5-datapath", "dpdk-datapath", "mlx5-datapath/mlx5"]
 profiler = ["cornflakes-libos/profiler", "demikernel", "dpdk-datapath/profiler", "mlx5-datapath/profiler"]
+statscollection = ["cornflakes-libos/statscollection", "zero_copy_cache/statscollection"]
 
 [[bin]]
 name = "ycsb_dpdk"

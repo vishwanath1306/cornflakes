@@ -30,7 +30,8 @@ itertools = "0.10.2"
 bitmaps = "3.2.0"
 bumpalo = { git = "https://github.com/deeptir18/bumpalo", features = ["collections"] }
 ahash = "0.7.6"
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "b2890719823d98cfc86be12d7b69933fb47be763"}
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "0e8b3ad28d56581558acfc8c1285cd357b0bb76a"}
+#zero_copy_cache = { path = "../../zero_copy_cache" }
 
 [dev-dependencies]
 libc = "0.2.81"
@@ -39,5 +40,6 @@ rand = "0.7.3"
 
 [features]
 default = []
+statscollection = ["zero_copy_cache/statscollection"]
 profiler = ["demikernel"]
 

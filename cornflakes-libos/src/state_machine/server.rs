@@ -2,6 +2,11 @@
 use demikernel::perftools;
 #[cfg(feature = "profiler")]
 const PROFILER_DEPTH: usize = 10;
+
+// global stats collection
+#[cfg(feature = "statscollection")]
+use zero_copy_cache::data_structures::COPY_STATS;
+
 use super::super::{
     datapath::{Datapath, PushBufType, ReceivedPkt},
     ArenaOrderedSga,
@@ -160,6 +165,11 @@ pub trait ServerSM {
     }
 
     fn run_state_machine(&mut self, datapath: &mut Self::Datapath) -> Result<()> {
+        // stats collection for zero_copy_cache
+        #[cfg(feature = "statscollection")]
+        let mut _last_stats_printed: Instant = Instant::now();
+        let mut _requests_processed_stats = 0;
+
         // run profiler from here
         #[cfg(feature = "profiler")]
         perftools::profiler::reset();
@@ -177,6 +187,23 @@ pub trait ServerSM {
         loop {
             #[cfg(feature = "profiler")]
             demikernel::timer!("Run state machine loop");
+
+            #[cfg(feature = "statscollection")]
+            {
+                if _last_stats_printed.elapsed() > std::time::Duration::from_secs(2) {
+                    let d = Instant::now() - _last_stats_printed;
+                    tracing::info!(
+                        "Server processed {} # of reqs since last dump at rate of {:.2} reqs/s; copy_stats: {:?}",
+                        _requests_processed_stats,
+                        _requests_processed_stats as f64 / d.as_secs_f64(),
+                        COPY_STATS.lock().unwrap(),
+                    );
+                    _last_stats_printed = Instant::now();
+                    _requests_processed_stats = 0;
+                    let mut copy_stats = COPY_STATS.lock().unwrap();
+                    copy_stats.reset();
+                }
+            }
 
             #[cfg(feature = "profiler")]
             {
@@ -200,6 +227,11 @@ pub trait ServerSM {
                 demikernel::timer!("Datapath pop");
                 datapath.pop()?
             };
+            #[cfg(feature = "stats_collection")]
+            {
+                _requests_processed_stats += pkts.len();
+            }
+
             if pkts.len() > 0 {
                 match self.push_buf_type() {
                     PushBufType::SingleBuf => {

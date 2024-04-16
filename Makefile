@@ -36,6 +36,10 @@ ifeq ($(PROFILER), y)
 	CARGOFEATURES +=profiler
 endif
 
+ifeq ($(STATS), y)
+	CARGOFEATURES += statscollection
+endif
+
 CARGOFEATURES := $(subst $(space),$(comma),$(CARGOFEATURES))
 
 tapir: mlx5-datapath
