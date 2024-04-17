@@ -18,7 +18,7 @@ hashbrown = "0.11.*"
 bytes = "1.1.0"
 byteorder = "1.3.4"
 protobuf = "3.0.3"
-zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "0e8b3ad28d56581558acfc8c1285cd357b0bb76a"}
+zero_copy_cache = {git = "https://github.com/vishwanath1306/zero_copy_cache", rev = "fc63bf8002f746ff0eaf16f0bbecfcb552d1806b"}
 #zero_copy_cache = { path = "../../zero_copy_cache" }
 
 [build-dependencies]

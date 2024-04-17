@@ -227,7 +227,7 @@ pub trait ServerSM {
                 demikernel::timer!("Datapath pop");
                 datapath.pop()?
             };
-            #[cfg(feature = "stats_collection")]
+            #[cfg(feature = "statscollection")]
             {
                 _requests_processed_stats += pkts.len();
             }
