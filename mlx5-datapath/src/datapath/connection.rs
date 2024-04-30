@@ -5987,12 +5987,35 @@ where
         &mut self,
         buf: &[u8],
     ) -> Result<Option<Self::DatapathMetadata>> {
-        match self
-            .zero_copy_cache
-            .record_access_and_get_io_info_if_pinned(
-                buf,
-                self.thread_context.get_global_context_rc(),
-            )? {
+        let seg_info_opt: Option<(MempoolId, usize)> = match self.zero_copy_cache.pin_on_demand {
+            true => {
+                if let Some(segment_id) = self.zero_copy_cache.get_segment_id(buf) {
+                    let eviction_id_option = self
+                        .zero_copy_cache
+                        .record_access_for_pin_on_demand(segment_id);
+                    loop {
+                        match self.zero_copy_cache.pin_on_demand(
+                            eviction_id_option,
+                            self.thread_context.get_global_context_rc(),
+                        )? {
+                            Some((mempool_id, lkey)) => Some((mempool_id, lkey)),
+                            None => {
+                                self.poll_for_completions()?;
+                            }
+                        }
+                    }
+                } else {
+                    unreachable!();
+                }
+            }
+            false => self
+                .zero_copy_cache
+                .record_access_and_get_io_info_if_pinned(
+                    buf,
+                    self.thread_context.get_global_context_rc(),
+                )?,
+        };
+        match seg_info_opt {
             Some((mempool_id, lkey)) => {
                 match self.allocator.recover_from_mempool(mempool_id, buf)? {
                     Some(mut m) => {
@@ -6012,6 +6035,10 @@ where
                 }
             }
             None => {
+                assert!(
+                    !self.zero_copy_cache.pin_on_demand,
+                    "For pin on demand, data should always be pinned"
+                );
                 tracing::debug!("Zero copy cache doesn't have addr {:?}", buf.as_ptr());
                 Ok(None)
             }
