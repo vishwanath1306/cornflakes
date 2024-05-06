@@ -5994,8 +5994,9 @@ where
                         .zero_copy_cache
                         .record_access_for_pin_on_demand(segment_id);
                     loop {
-                        match self.zero_copy_cache.pin_on_demand(
+                        match self.zero_copy_cache.check_for_drained_io_and_pin_on_demand(
                             eviction_id_option,
+                            segment_id,
                             self.thread_context.get_global_context_rc(),
                         )? {
                             Some((mempool_id, lkey)) => Some((mempool_id, lkey)),
