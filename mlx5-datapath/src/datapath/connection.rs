@@ -5987,35 +5987,37 @@ where
         &mut self,
         buf: &[u8],
     ) -> Result<Option<Self::DatapathMetadata>> {
-        let seg_info_opt: Option<(MempoolId, usize)> = match self.zero_copy_cache.pin_on_demand {
+        let mut seg_info_opt: Option<(MempoolID, i32)> = None;
+        match self.zero_copy_cache.pin_on_demand {
             true => {
                 if let Some(segment_id) = self.zero_copy_cache.get_segment_id(buf) {
                     let eviction_id_option = self
                         .zero_copy_cache
                         .record_access_for_pin_on_demand(segment_id);
                     loop {
-                        match self.zero_copy_cache.check_for_drained_io_and_pin_on_demand(
+                        if let Some(x) = self.zero_copy_cache.check_for_active_io_and_pin_on_demand(
                             eviction_id_option,
                             segment_id,
                             self.thread_context.get_global_context_rc(),
                         )? {
-                            Some((mempool_id, lkey)) => Some((mempool_id, lkey)),
-                            None => {
-                                self.poll_for_completions()?;
-                            }
+                            seg_info_opt = Some(x);
+                            break;
+                        } else {
+                            self.poll_for_completions()?;
                         }
                     }
                 } else {
                     unreachable!();
                 }
             }
-            false => self
-                .zero_copy_cache
-                .record_access_and_get_io_info_if_pinned(
-                    buf,
-                    self.thread_context.get_global_context_rc(),
-                )?,
-        };
+            false => {
+                seg_info_opt = self.zero_copy_cache
+                    .record_access_and_get_io_info_if_pinned(
+                        buf,
+                        self.thread_context.get_global_context_rc(),
+                    )?;
+            }
+        }
         match seg_info_opt {
             Some((mempool_id, lkey)) => {
                 match self.allocator.recover_from_mempool(mempool_id, buf)? {
