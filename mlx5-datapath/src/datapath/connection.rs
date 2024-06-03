@@ -39,7 +39,7 @@ use zero_copy_cache::data_structures::{CacheBuilder, DatapathSlab, ZeroCopyCache
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 128;
 const COMPLETION_BUDGET: usize = 32;
-const RECEIVE_BURST_SIZE: usize = 32;
+const RECEIVE_BURST_SIZE: usize = 1;
 const MAX_BUFFER_SIZE: usize = 16384;
 const MEMPOOL_MIN_ELTS: usize = 8192;
 const TX_POOL_NUM_REGISTRATIONS: usize = 1;
@@ -1270,6 +1270,24 @@ where
         // TODO: modify poll for completions to collect addresses that were completed
         if unsafe {
             custom_mlx5_process_completions(
+                self.thread_context.get_context_ptr(),
+                COMPLETION_BUDGET as _,
+                Some(io_completion_callback::<CB>),
+                &mut self.zero_copy_cache as *mut ZeroCopyCache<CornflakesMlx5Slab, CB>
+                    as *mut ::std::os::raw::c_void,
+            )
+        } != 0
+        {
+            bail!("Unsafe processing completions");
+        }
+        return Ok(());
+    }
+
+    fn poll_for_completions_on_demand(&mut self) -> Result<()> {
+        // check for completions: ONLY WHEN IN FLIGHT > THRESH
+        // TODO: modify poll for completions to collect addresses that were completed
+        if unsafe {
+            custom_mlx5_process_completions_on_demand(
                 self.thread_context.get_context_ptr(),
                 COMPLETION_BUDGET as _,
                 Some(io_completion_callback::<CB>),
@@ -6003,7 +6021,7 @@ where
                             seg_info_opt = Some(x);
                             break;
                         } else {
-                            self.poll_for_completions()?;
+                            self.poll_for_completions_on_demand()?;
                         }
                     }
                 } else {

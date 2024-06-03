@@ -53,6 +53,7 @@ int custom_mlx5_tx_descriptors_available(struct custom_mlx5_per_thread_context *
 typedef void (*rust_callback)(void*,void*, uint64_t);
 void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v, rust_callback completion_callback, void *zcc);
 
+
 /*
  * Process completions - processes any transmission completions.
  * Will reduce reference count and/or free underlying mbufs within
@@ -65,6 +66,14 @@ void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v,
  * Number of processed completions.
  * */
 int custom_mlx5_process_completions(struct custom_mlx5_per_thread_context *per_thread_context,
+                                unsigned int budget,
+                                rust_callback completion_callback,
+                                void *zcc);
+
+/*
+ * On-demand version of above function. Does not batch.
+ */
+int custom_mlx5_process_completions_on_demand(struct custom_mlx5_per_thread_context *per_thread_context,
                                 unsigned int budget,
                                 rust_callback completion_callback,
                                 void *zcc);

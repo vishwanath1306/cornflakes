@@ -46,6 +46,12 @@ static inline void __custom_mlx5_mempool_alloc_debug_check(struct custom_mlx5_me
 static inline void __custom_mlx5_mempool_free_debug_check(struct custom_mlx5_mempool *m, void *item) {}
 #endif /* DEBUG */
 
+
+/*
+ * get front of buffer
+*/
+char *custom_mlx5_mempool_get_buffer_front(struct custom_mlx5_mempool *m, size_t index);
+
 /*
  * custom_mlx5_mempool_is_registered - Checks if the given registration unit is
  * registered currently.

@@ -48,6 +48,10 @@ void __custom_mlx5_mempool_free_debug_check(struct custom_mlx5_mempool *m, void 
 
 #endif /* DEBUG */
 
+char *custom_mlx5_mempool_get_buffer_front(struct custom_mlx5_mempool *m, size_t index) {
+    return (char *)m->buf + (index * (1 << m->log_item_len));
+}
+
 void *custom_mlx5_mempool_alloc(struct custom_mlx5_mempool *m)
 {
 	void *item;

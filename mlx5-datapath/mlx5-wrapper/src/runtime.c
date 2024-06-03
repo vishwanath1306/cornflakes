@@ -36,6 +36,10 @@ void custom_mlx5_process_completion(uint16_t wqe_idx, struct custom_mlx5_txq *v,
         // reduce refcnt or free data
         NETPERF_DEBUG("Index %lu, Processing completion for mempool %p, data %p, refcnt_index %lu; cur refcnt: %u, cur allocated: %lu", i, curr->mempool, curr->info.data, refcnt_index, curr->mempool->ref_counts[refcnt_index], curr->mempool->allocated);
         custom_mlx5_refcnt_update_or_free(curr->mempool, curr->info.data, refcnt_index, -1);
+        if (i > 0) {
+            char* buffer_front = custom_mlx5_mempool_get_buffer_front(curr->mempool, refcnt_index);
+            completion_callback(zcc, buffer_front, curr->mempool->item_len);
+        }
     }
     // advance the sq_head
     v->true_cq_head += transmission->info.metadata.num_wqes;
@@ -52,6 +56,46 @@ int custom_mlx5_process_completions(struct custom_mlx5_per_thread_context *per_t
         NETPERF_DEBUG("IN FLIGHT: %u", custom_mlx5_nr_inflight_tx(v));
         return 0;
     }
+    unsigned int compl_cnt;
+    uint8_t opcode;
+    uint16_t wqe_idx;
+
+    struct mlx5dv_cq *cq = &v->tx_cq_dv;
+    struct mlx5_cqe64 *cqe = cq->buf;
+    struct mlx5_cqe64 *cqes = cq->buf;
+
+    for (compl_cnt = 0; compl_cnt < budget; compl_cnt++, v->cq_head++) {
+        NETPERF_DEBUG("Polling for completion on cqe: %u, true_cq_head: %u, true idx: %u", v->cq_head, v->true_cq_head, v->cq_head & (cq->cqe_cnt - 1));
+        cqe = &cqes[v->cq_head & (cq->cqe_cnt - 1)];
+        opcode = custom_mlx5_cqe_status(cqe, cq->cqe_cnt, v->cq_head);
+        if (opcode == MLX5_CQE_INVALID) {
+            NETPERF_DEBUG("Invalid cqe for cqe # %u, syndrome: %d", v->cq_head, custom_mlx5_get_error_syndrome(cqe));
+            break;
+        }
+
+        NETPERF_PANIC_ON_TRUE(opcode != MLX5_CQE_REQ, "Wrong opcode, cqe_format: %d, cqe_format equals 0x3: %d, opcode: %d, wqe counter: %d, syndrome: %d", 
+                custom_mlx5_get_cqe_format(cqe), 
+                custom_mlx5_get_cqe_format(cqe) == 0x3, 
+                custom_mlx5_get_cqe_opcode(cqe), 
+                be16toh(cqe->wqe_counter), 
+                custom_mlx5_get_error_syndrome(cqe));
+
+        wqe_idx = be16toh(cqe->wqe_counter) & (v->tx_qp_dv.sq.wqe_cnt - 1);
+        NETPERF_DEBUG("Got completion on wqe idx: %u; unwrapped cqe wqe idx: %u, wqe ct: %u, cqe cnt: %u", wqe_idx, be16toh(cqe->wqe_counter), v->tx_qp_dv.sq.wqe_cnt, cq->cqe_cnt);
+        // process completion information for this transmission
+        custom_mlx5_process_completion(wqe_idx, v, completion_callback, zcc);
+    }
+
+    cq->dbrec[0] = htobe32(v->cq_head & 0xffffff);
+    return 0;
+}
+
+int custom_mlx5_process_completions_on_demand(struct custom_mlx5_per_thread_context *per_thread_context,
+                                unsigned int budget,
+                                rust_callback completion_callback,
+                                void *zcc) {
+    struct custom_mlx5_txq *v = &per_thread_context->txq;
+
     unsigned int compl_cnt;
     uint8_t opcode;
     uint16_t wqe_idx;
